@@ -1416,18 +1416,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", status)
 
     def do_GET(self):
-        if self.path in {"/", "/index.html"}:
-            html = HTML.replace("%ROLES_JSON%", json.dumps(ROLES, ensure_ascii=False))
-            self.send_bytes(
-                html.encode("utf-8"),
-                "text/html; charset=utf-8",
-                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
-            )
-            return
         if self.path == "/health":
             self.send_json({"ok": True})
             return
-        self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        if self.path.startswith("/api/"):
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        if self.path.startswith("/download/"):
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        html = HTML.replace("%ROLES_JSON%", json.dumps(ROLES, ensure_ascii=False))
+        self.send_bytes(
+            html.encode("utf-8"),
+            "text/html; charset=utf-8",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+        return
 
     def do_OPTIONS(self):
         self.send_bytes(b"", "text/plain; charset=utf-8", HTTPStatus.NO_CONTENT)
