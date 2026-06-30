@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: xiajiu-weekly-report-panel
+    env: docker
+    plan: starter
+    autoDeploy: false
