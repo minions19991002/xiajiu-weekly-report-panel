@@ -726,25 +726,11 @@ def is_reference_week(current_start, current_end, previous_start, previous_end):
 
 
 def fixed_m4_overall_lines(current_start, current_end, previous_start, previous_end, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
-    if not is_reference_week(current_start, current_end, previous_start, previous_end) or not is_default_ele_visit_lift_rate(ele_visit_lift_rate):
-        return None
-    return [
-        "\u6574\u4f53\uff1a",
-        "1\u3001\u672c\u5468\u4e1a\u7ee9\u589e\u957f0.7%\uff0c\u8ba2\u5355\u4e0b\u6ed12.0%",
-        "2\u3001\u672c\u5468\u63a8\u5e7f\u5171\u8ba1\u6d88\u80178,057\u5143\uff0c\u6574\u4f53roi\u4e3a7.1\uff0c\u63a8\u5e7f\u5e26\u6765\u5b9e\u653657,510\u5143 \uff0c\u73af\u6bd4\u589e\u52a013,281\u5143",
-    ]
+    return None
 
 
 def fixed_cpc_summary(current_start, current_end, previous_start, previous_end, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
-    if not is_reference_week(current_start, current_end, previous_start, previous_end) or not is_default_ele_visit_lift_rate(ele_visit_lift_rate):
-        return None
-    return (
-        "\u672c\u5468\u603b\u4f53\u60c5\u51b5\uff1a\u672c\u5468CPC\u5171\u8ba1\u6d88\u80178,057\u5143\uff0c"
-        "\u6574\u4f53roi\u4e3a7.1\uff0c\u63a8\u5e7f\u5e26\u6765\u5b9e\u653657,510\u5143\uff1b \n"
-        "\u76ee\u524d\u5bf9\u6bd46.8-6.14\u671f\u95f4\uff0cROI-0.4\uff1b"
-        "\u63a8\u5e7f\u8d44\u91d1+2184.4\u5143\uff0c\u63a8\u5e7f\u8ba2\u5355+178\u5355\uff0c"
-        "\u63a8\u5e7f\u5b9e\u6536+13281\u3002"
-    )
+    return None
 
 
 def id_text(value):
@@ -863,20 +849,13 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
         & (mt_promo["_date"] >= previous_start)
         & (mt_promo["_date"] <= current_end)
     ].copy()
-    if "资金类型" in mt.columns:
-        mt = mt[mt["资金类型"].astype(str) != "门店资金"]
-    if "资金来源" in mt.columns:
-        mt = mt[mt["资金来源"].astype(str) != "门店资金"]
 
     ele = ele_promo[
         ele_promo["_id"].isin(ele_ids)
         & (ele_promo["_date"] >= previous_start)
         & (ele_promo["_date"] <= current_end)
         & (ele_promo["推广产品"].astype(str) != "增量助手")
-        & (ele_promo["资金来源"].astype(str) != "分店资金")
     ].copy()
-    if "资金类型" in ele.columns:
-        ele = ele[ele["资金类型"].astype(str) != "分店资金"]
 
     ratio_by_store_date = {}
     for _, row in ele_store[ele_store["_id"].isin(ele_ids)].iterrows():

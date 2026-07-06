@@ -532,19 +532,12 @@ def main():
         & ~mt_promo["场景"].astype(str).isin(MT_PROMO_EXCLUDE)
         & in_range(mt_promo, "_date", month_start, current_end)
     ].copy()
-    if "资金类型" in mt_promo_filtered.columns:
-        mt_promo_filtered = mt_promo_filtered[mt_promo_filtered["资金类型"].astype(str) != "门店资金"]
-    if "资金来源" in mt_promo_filtered.columns:
-        mt_promo_filtered = mt_promo_filtered[mt_promo_filtered["资金来源"].astype(str) != "门店资金"]
 
     ele_promo_filtered = ele_promo[
         ele_promo["_id"].isin(ele_ids)
         & in_range(ele_promo, "_date", month_start, current_end)
         & (ele_promo["推广产品"].astype(str) != "增量助手")
-        & (ele_promo["资金来源"].astype(str) != "分店资金")
     ].copy()
-    if "资金类型" in ele_promo_filtered.columns:
-        ele_promo_filtered = ele_promo_filtered[ele_promo_filtered["资金类型"].astype(str) != "分店资金"]
 
     profit_ws = target_wb["26年利润额和食亨服务费"]
     month_col = current_end.month + 1
@@ -814,10 +807,6 @@ def main():
         & ~mt_promo["场景"].astype(str).isin(MT_PROMO_EXCLUDE)
         & in_range(mt_promo, "_date", prev_start, current_end)
     ].copy()
-    if "资金类型" in mt_promo_cpc.columns:
-        mt_promo_cpc = mt_promo_cpc[mt_promo_cpc["资金类型"].astype(str) != "门店资金"]
-    if "资金来源" in mt_promo_cpc.columns:
-        mt_promo_cpc = mt_promo_cpc[mt_promo_cpc["资金来源"].astype(str) != "门店资金"]
     mt_cur, mt_prev = period_agg_rows(mt_promo_cpc, "_date", current_start, current_end, prev_start, prev_end)
 
     def mt_metrics(df):
@@ -876,10 +865,7 @@ def main():
         ele_promo["_id"].isin(ele_ids)
         & in_range(ele_promo, "_date", prev_start, current_end)
         & (ele_promo["推广产品"].astype(str) != "增量助手")
-        & (ele_promo["资金来源"].astype(str) != "分店资金")
     ].copy()
-    if "资金类型" in ele_promo_cpc.columns:
-        ele_promo_cpc = ele_promo_cpc[ele_promo_cpc["资金类型"].astype(str) != "分店资金"]
 
     ele_promo_cpc["_group"] = ele_promo_cpc["推广产品"].astype(str).map(
         lambda v: "推广魔方" if "推广魔方" in v else ("一站式推广" if "一站式" in v else ("斗金推广" if "斗金" in v else v))
