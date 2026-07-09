@@ -670,10 +670,10 @@ def main():
 
     # Sheet2: ratings.
     ws = target_wb["门店评分"]
-    ws.cell(2, 2).value = current_end.strftime("%Y-%m-%d")
-    ws.cell(2, 3).value = prev_end.strftime("%Y-%m-%d")
-    ws.cell(2, 5).value = current_end.strftime("%Y-%m-%d")
-    ws.cell(2, 6).value = prev_end.strftime("%Y-%m-%d")
+    ws.cell(2, 2).value = current_short
+    ws.cell(2, 3).value = previous_short
+    ws.cell(2, 5).value = current_short
+    ws.cell(2, 6).value = previous_short
     current_scores = review_summary_rating_scores(mt_ids, ele_ids)
     previous_scores = previous_rating_scores(target_wb)
     for idx, store in enumerate(stores, start=3):
@@ -683,8 +683,9 @@ def main():
             prev = previous_score_for_store(previous_scores, store["name"], platform)
             diff = None if cur is None or prev is None else cur - prev
             for offset, val in enumerate([cur, prev, diff]):
-                ws.cell(idx, start_col + offset).value = None if val is None else round(val, 2)
-                ws.cell(idx, start_col + offset).number_format = "0.00"
+                decimals = 2 if offset == 2 else 1
+                ws.cell(idx, start_col + offset).value = None if val is None else round(val, decimals)
+                ws.cell(idx, start_col + offset).number_format = "0.00" if offset == 2 else "0.0"
 
     # Sheet3: products.
     ws = target_wb["菜品情况"]
