@@ -29,7 +29,9 @@ ELE_GOODS = BASE / "饿了么商品数据.xlsx"
 MT_PROMO = BASE / "美团推广.xlsx"
 ELE_PROMO = BASE / "饿了么推广.xlsx"
 REVIEWS = BASE / "下酒_评价明细_2026-06-15~2026-06-21.xlsx"
+REVIEW_SUMMARY = BASE / "下酒_评价汇总_2026-06-15~2026-06-21.xlsx"
 CLOSURES = BASE / "下酒门店监控报表_20260615-20260621.xlsx"
+PREVIOUS_REPORT = None
 
 OUTPUT = OUTPUT_DIR / "下酒_周报数据_已填写_2026-06-15_2026-06-21_美团推广订单总订单_中间版.xlsx"
 POSTPROCESS_HOOK = None
@@ -454,6 +456,81 @@ def summarize_promo(df, group_col, metric_cols):
     return result
 
 
+def clean_header(value):
+    return re.sub(r"\s+", "", str(value or "").strip()).lower()
+
+
+def find_column(df, candidates):
+    by_clean = {clean_header(col): col for col in df.columns}
+    for candidate in candidates:
+        key = clean_header(candidate)
+        if key in by_clean:
+            return by_clean[key]
+    for col in df.columns:
+        text = clean_header(col)
+        if any(clean_header(candidate) in text for candidate in candidates):
+            return col
+    raise KeyError("缺少字段：" + "、".join(candidates))
+
+
+def review_summary_rating_scores(mt_ids, ele_ids):
+    df = read_df(REVIEW_SUMMARY, "按门店")
+    id_col = find_column(df, ["平台门店ID", "平台门店id"])
+    platform_col = find_column(df, ["外卖平台", "平台"])
+    score_col = find_column(df, ["门店评分"])
+    scores = {"mt": {}, "ele": {}}
+    for _, row in df.iterrows():
+        sid = id_text(row.get(id_col))
+        score = to_optional_number(row.get(score_col))
+        if not sid or score is None:
+            continue
+        platform = str(row.get(platform_col) or "")
+        if sid in mt_ids or "美团" in platform:
+            scores["mt"][sid] = score
+        elif sid in ele_ids or "饿了么" in platform:
+            scores["ele"][sid] = score
+    return scores
+
+
+def rating_sheet_scores(ws):
+    scores = {}
+    for row_idx in range(3, ws.max_row + 1):
+        store_name = ws.cell(row_idx, 1).value
+        if store_name in (None, ""):
+            continue
+        key = normalize_store_text(store_name)
+        if not key:
+            continue
+        scores[key] = {
+            "ele": to_optional_number(ws.cell(row_idx, 2).value),
+            "mt": to_optional_number(ws.cell(row_idx, 5).value),
+        }
+    return scores
+
+
+def previous_rating_scores(target_wb):
+    if PREVIOUS_REPORT and Path(PREVIOUS_REPORT).exists():
+        previous_wb = load_workbook(PREVIOUS_REPORT, read_only=True, data_only=True, keep_links=False)
+        try:
+            if "门店评分" in previous_wb.sheetnames:
+                return rating_sheet_scores(previous_wb["门店评分"])
+        finally:
+            previous_wb.close()
+    if "门店评分" in target_wb.sheetnames:
+        return rating_sheet_scores(target_wb["门店评分"])
+    return {}
+
+
+def previous_score_for_store(scores, store_name, platform):
+    key = normalize_store_text(store_name)
+    if key in scores:
+        return scores[key].get(platform)
+    for candidate, values in scores.items():
+        if key and candidate and (key in candidate or candidate in key):
+            return values.get(platform)
+    return None
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -500,7 +577,6 @@ def main():
     weekly_summary = weekly_wb["周报综述"]
     weekly_blocks = weekly_wb["各板块信息"]
     weekly_rank = weekly_wb["门店实收排行榜"]
-    weekly_scores = weekly_wb["门店中差评分析"]
 
     # Sheet1: overall performance and target progress.
     ws = target_wb["整体业绩情况"]
@@ -598,26 +674,17 @@ def main():
     ws.cell(2, 3).value = prev_end.strftime("%Y-%m-%d")
     ws.cell(2, 5).value = current_end.strftime("%Y-%m-%d")
     ws.cell(2, 6).value = prev_end.strftime("%Y-%m-%d")
-    ele_scores = {}
-    mt_scores = {}
-    for row in range(5, weekly_scores.max_row + 1):
-        ele_id = id_text(weekly_scores.cell(row, 21).value)
-        if ele_id:
-            cur = to_optional_number(weekly_scores.cell(row, 28).value)
-            prev = to_optional_number(weekly_scores.cell(row, 29).value)
-            ele_scores[ele_id] = (cur, prev, None if cur is None or prev is None else cur - prev)
-        mt_id = id_text(weekly_scores.cell(row, 36).value)
-        if mt_id:
-            cur = to_optional_number(weekly_scores.cell(row, 43).value)
-            prev = to_optional_number(weekly_scores.cell(row, 44).value)
-            mt_scores[mt_id] = (cur, prev, None if cur is None or prev is None else cur - prev)
+    current_scores = review_summary_rating_scores(mt_ids, ele_ids)
+    previous_scores = previous_rating_scores(target_wb)
     for idx, store in enumerate(stores, start=3):
         ws.cell(idx, 1).value = store["name"]
-        for start_col, score_map, sid in [(2, ele_scores, store["ele_id"]), (5, mt_scores, store["mt_id"])]:
-            cur, prev, diff = score_map.get(sid, (None, None, None))
+        for start_col, platform, sid in [(2, "ele", store["ele_id"]), (5, "mt", store["mt_id"])]:
+            cur = current_scores[platform].get(sid)
+            prev = previous_score_for_store(previous_scores, store["name"], platform)
+            diff = None if cur is None or prev is None else cur - prev
             for offset, val in enumerate([cur, prev, diff]):
-                ws.cell(idx, start_col + offset).value = None if val is None else round(val, 1)
-                ws.cell(idx, start_col + offset).number_format = "0.0"
+                ws.cell(idx, start_col + offset).value = None if val is None else round(val, 2)
+                ws.cell(idx, start_col + offset).number_format = "0.00"
 
     # Sheet3: products.
     ws = target_wb["菜品情况"]

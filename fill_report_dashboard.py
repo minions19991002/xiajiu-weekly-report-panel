@@ -46,6 +46,7 @@ ROLES = [
     {"id": "elePromo", "label": "饿了么推广", "hints": ["饿了么推广"]},
     {"id": "mtStore", "label": "美团门店数据", "hints": ["美团门店"]},
     {"id": "eleStore", "label": "饿了么门店数据", "hints": ["饿了么门店"]},
+    {"id": "reviewSummary", "label": "下酒_评价汇总", "hints": ["评价汇总"]},
     {"id": "reviews", "label": "下酒_评价明细", "hints": ["评价明细"]},
     {"id": "closures", "label": "下酒门店监控报表", "hints": ["门店监控", "异常闭店"]},
 ]
@@ -132,7 +133,7 @@ HTML = r"""<!doctype html>
         <header class="topbar">
           <div>
             <h1>下酒周报填写表格看板</h1>
-            <p>一次上传 10 个数据源表，后台自动填写完整周报 Excel。</p>
+            <p>一次上传 11 个数据源表，后台自动填写完整周报 Excel。</p>
           </div>
           <button id="resetBtn" class="primary-button" type="button">清空</button>
         </header>
@@ -140,7 +141,7 @@ HTML = r"""<!doctype html>
         <section class="upload-band" id="dropZone">
           <div class="upload-copy">
             <strong>批量上传</strong>
-            <span>拖入或选择 10 个必需 Excel 文件；也可以额外上传上周已生成的周报，用来延续业绩趋势。</span>
+            <span>拖入或选择 11 个必需 Excel 文件；也可以额外上传上周已生成的周报，用来延续业绩趋势和上期评分。</span>
           </div>
           <label class="primary-action">
             <input id="fileInput" type="file" accept=".xlsx,.xls" multiple />
@@ -173,12 +174,12 @@ HTML = r"""<!doctype html>
           <div class="notice">
             本看板会调用后台完整填表规则：本期和上期都必须是完整自然周，周期为周一到周日。
             如果上传数据最大日期落在周中，会自动回退到最近一个已完整结束的周日。
-            文件名只是辅助，生成时会优先根据工作表名和表头内容判断 10 个数据源。
+            文件名只是辅助，生成时会优先根据工作表名和表头内容判断 11 个数据源。
             如果有表格没有自动匹配，可以在对应卡片里点「单独上传」手动指定。
             如果额外上传上周周报数据，Sheet7 会优先从上周文件的「业绩趋势」延续历史。
             整体业绩、门店评分、菜品情况、中差评、异常闭店、CPC、业绩趋势都会写入。
           </div>
-          <div id="log" class="log">请先上传 10 个必需 Excel 文件；上周周报数据可选。</div>
+          <div id="log" class="log">请先上传 11 个必需 Excel 文件；上周周报数据可选。</div>
           <div class="download-row" id="downloadRow" hidden>
             <span class="download-hint">已生成文件</span>
             <a id="downloadLink" class="download-link" download>下载已生成 Excel</a>
@@ -199,7 +200,8 @@ HTML = r"""<!doctype html>
           <li>饿了么门店数据.xlsx</li>
           <li>下酒_评价明细.xlsx</li>
           <li>下酒门店监控报表.xlsx</li>
-          <li>上周生成的【下酒】周报数据.xlsx（可选，用于延续业绩趋势）</li>
+          <li>下酒_评价汇总.xlsx</li>
+          <li>上周生成的【下酒】周报数据.xlsx（可选，用于延续业绩趋势和上期评分）</li>
         </ol>
         <div class="note">
           <strong>自动规则</strong>
@@ -295,7 +297,7 @@ HTML = r"""<!doctype html>
         if (outputUrl) URL.revokeObjectURL(outputUrl);
         outputUrl = null;
         downloadRow.hidden = true;
-        log.textContent = "请先上传 10 个必需 Excel 文件；上周周报数据可选。";
+        log.textContent = "请先上传 11 个必需 Excel 文件；上周周报数据可选。";
         generateBtn.textContent = "生成周报";
         render();
       }
@@ -316,8 +318,8 @@ HTML = r"""<!doctype html>
           : missing.length
           ? `已上传 ${uploadedFiles.length} 个文件。文件名未完全匹配，生成时后台会按工作表和表头内容识别。`
           : filesByRole.get("previousReport")
-          ? "10 个必需文件已就绪，并已识别上周周报数据，Sheet7 会从上周文件延续。"
-          : "10 个必需文件已就绪，可以生成完整周报；上周周报数据未上传时会使用本机历史缓存兜底。";
+          ? "11 个必需文件已就绪，并已识别上周周报数据，Sheet7 和上期评分会优先从上周文件延续。"
+          : "11 个必需文件已就绪，可以生成完整周报；上周周报数据未上传时会使用本机历史缓存和模板兜底。";
         render();
       }
 
@@ -493,6 +495,11 @@ def classify_workbook_content(path: Path) -> tuple[str | None, int]:
         add_score(scores, "reviews", 110)
     if token_has(sheet_names, "评价详情") and token_all(tokens, ["好评情绪", "菜品质量评分"]):
         add_score(scores, "reviews", 60)
+
+    if token_has(sheet_names, "按门店") and token_all(tokens, ["平台门店ID", "外卖平台", "门店评分"]):
+        add_score(scores, "reviewSummary", 130)
+    if token_all(tokens, ["门店评分环比", "中差评回复率", "好评回复率", "目标评分"]):
+        add_score(scores, "reviewSummary", 80)
 
     if token_has(sheet_names, "预计损失") and token_all(tokens, ["异常时间（分钟）", "营业时长（分钟）", "预计损失（元）"]):
         add_score(scores, "closures", 120)
@@ -1356,7 +1363,9 @@ def generate_report(files: dict[str, Path], request_dir: Path, ele_visit_lift_ra
         module.MT_PROMO = files["mtPromo"]
         module.ELE_PROMO = files["elePromo"]
         module.REVIEWS = files["reviews"]
+        module.REVIEW_SUMMARY = files["reviewSummary"]
         module.CLOSURES = files["closures"]
+        module.PREVIOUS_REPORT = files.get("previousReport")
         module.ELE_VISIT_LIFT_TO_VISITOR_RATE = ele_visit_lift_rate
         module.OUTPUT_DIR = request_dir
         module.OUTPUT = output
