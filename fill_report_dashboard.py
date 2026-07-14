@@ -964,13 +964,20 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
         if total_qoq is not None and round(total_qoq * 100, 1) <= -10.0:
             mt_change = metric_change(mt_cur, mt_prev)
             ele_change = metric_change(ele_cur, ele_prev)
-            main_platform, main_change = ("美团", mt_change) if mt_change["revenue_delta"] <= ele_change["revenue_delta"] else ("饿了么", ele_change)
+            platform_changes = []
+            if mt_change["revenue_delta"] < 0:
+                platform_changes.append(("美团", mt_change))
+            if ele_change["revenue_delta"] < 0:
+                platform_changes.append(("饿了么", ele_change))
+            if not platform_changes:
+                platform_changes.append(
+                    ("美团", mt_change) if mt_change["revenue_delta"] <= ele_change["revenue_delta"] else ("饿了么", ele_change)
+                )
             focus.append(
                 {
                     "name": store["name"],
                     "total_qoq": total_qoq,
-                    "main_platform": main_platform,
-                    "main_change": main_change,
+                    "platform_changes": platform_changes,
                 }
             )
 
@@ -1004,8 +1011,12 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
     focus.sort(key=lambda item: item["total_qoq"])
     if focus:
         for item in focus:
-            lines.append(f"【{item['name']}】主要是{item['main_platform']}业绩下滑")
-            lines.append(platform_line(item["main_platform"], item["main_change"]))
+            if len(item["platform_changes"]) >= 2:
+                lines.append(f"【{item['name']}】双平台业绩下滑")
+            else:
+                lines.append(f"【{item['name']}】主要是{item['platform_changes'][0][0]}业绩下滑")
+            for platform, change in item["platform_changes"]:
+                lines.append(platform_line(platform, change))
             lines.append("")
     else:
         lines.append("本期无双平台实收下滑超过10%的门店。")
