@@ -605,14 +605,12 @@ def main():
 
     mt_promo_filtered = mt_promo[
         mt_promo["_id"].isin(mt_ids)
-        & ~mt_promo["场景"].astype(str).isin(MT_PROMO_EXCLUDE)
         & in_range(mt_promo, "_date", month_start, current_end)
     ].copy()
 
     ele_promo_filtered = ele_promo[
         ele_promo["_id"].isin(ele_ids)
         & in_range(ele_promo, "_date", month_start, current_end)
-        & (ele_promo["推广产品"].astype(str) != "增量助手")
     ].copy()
 
     profit_ws = target_wb["26年利润额和食亨服务费"]
@@ -872,7 +870,6 @@ def main():
 
     mt_promo_cpc = mt_promo[
         mt_promo["_id"].isin(mt_ids)
-        & ~mt_promo["场景"].astype(str).isin(MT_PROMO_EXCLUDE)
         & in_range(mt_promo, "_date", prev_start, current_end)
     ].copy()
     mt_cur, mt_prev = period_agg_rows(mt_promo_cpc, "_date", current_start, current_end, prev_start, prev_end)
@@ -899,13 +896,10 @@ def main():
             "roi_prev": safe_ratio(prev_metrics["revenue"], prev_metrics["spend"]),
         }
 
-    mt_group_rows = {"新客": 13, "菜品加速": 14, "老客": 15, "稳定转化": 16}
-    for group, row_idx in mt_group_rows.items():
-        cur_metrics = mt_metrics(mt_cur[mt_cur["场景"].astype(str) == group])
-        prev_metrics = mt_metrics(mt_prev[mt_prev["场景"].astype(str) == group])
-        write_metric_block(ws, row_idx, with_roi(cur_metrics, prev_metrics))
     mt_total_cur_metrics = mt_metrics(mt_cur)
     mt_total_prev_metrics = mt_metrics(mt_prev)
+    ws.cell(14, 3).value = "合计"
+    write_metric_block(ws, 14, with_roi(mt_total_cur_metrics, mt_total_prev_metrics))
     write_metric_block(ws, 17, with_roi(mt_total_cur_metrics, mt_total_prev_metrics))
     for idx, store in enumerate(stores, start=18):
         ws.cell(idx, 1).value = int(store["mt_id"]) if store["mt_id"].isdigit() else store["mt_id"]
@@ -932,12 +926,7 @@ def main():
     ele_promo_cpc = ele_promo[
         ele_promo["_id"].isin(ele_ids)
         & in_range(ele_promo, "_date", prev_start, current_end)
-        & (ele_promo["推广产品"].astype(str) != "增量助手")
     ].copy()
-
-    ele_promo_cpc["_group"] = ele_promo_cpc["推广产品"].astype(str).map(
-        lambda v: "推广魔方" if "推广魔方" in v else ("一站式推广" if "一站式" in v else ("斗金推广" if "斗金" in v else v))
-    )
     est_orders = []
     est_revenue = []
     for _, row in ele_promo_cpc.iterrows():
@@ -961,13 +950,10 @@ def main():
             "revenue": df["_est_revenue"].map(to_number).sum(),
         }
 
-    ele_group_rows = {"推广魔方": 37, "增量助手": 38, "一站式推广": 39, "斗金推广": 40}
-    for group, row_idx in ele_group_rows.items():
-        cur_metrics = ele_metrics(ele_cur[ele_cur["_group"] == group])
-        prev_metrics = ele_metrics(ele_prev[ele_prev["_group"] == group])
-        write_metric_block(ws, row_idx, with_roi(cur_metrics, prev_metrics))
     ele_total_cur_metrics = ele_metrics(ele_cur)
     ele_total_prev_metrics = ele_metrics(ele_prev)
+    ws.cell(37, 3).value = "合计"
+    write_metric_block(ws, 37, with_roi(ele_total_cur_metrics, ele_total_prev_metrics))
     write_metric_block(ws, 41, with_roi(ele_total_cur_metrics, ele_total_prev_metrics))
     for idx, store in enumerate(stores, start=42):
         ws.cell(idx, 1).value = int(store["ele_id"]) if store["ele_id"].isdigit() else store["ele_id"]

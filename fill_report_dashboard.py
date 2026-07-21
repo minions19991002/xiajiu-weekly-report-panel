@@ -852,7 +852,6 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
 
     mt = mt_promo[
         mt_promo["_id"].isin(mt_ids)
-        & ~mt_promo["场景"].astype(str).isin(module.MT_PROMO_EXCLUDE)
         & (mt_promo["_date"] >= previous_start)
         & (mt_promo["_date"] <= current_end)
     ].copy()
@@ -861,7 +860,6 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
         ele_promo["_id"].isin(ele_ids)
         & (ele_promo["_date"] >= previous_start)
         & (ele_promo["_date"] <= current_end)
-        & (ele_promo["推广产品"].astype(str) != "增量助手")
     ].copy()
 
     ratio_by_store_date = {}
@@ -1295,7 +1293,7 @@ def apply_postprocess_workbook(wb, module, files, current_start, current_end, pr
             if not isinstance(cell, MergedCell):
                 cell.font = font_with(cell.font, name="微软雅黑", size=10)
 
-    mt_row, ele_row = 17, 41
+    mt_row, ele_row = 14, 37
     spend_cur = to_number(cpc.cell(mt_row, 4).value) + to_number(cpc.cell(ele_row, 4).value)
     spend_prev = to_number(cpc.cell(mt_row, 5).value) + to_number(cpc.cell(ele_row, 5).value)
     orders_cur = to_number(cpc.cell(mt_row, 10).value) + to_number(cpc.cell(ele_row, 10).value)
