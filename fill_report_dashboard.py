@@ -1284,6 +1284,250 @@ def apply_trend_history_and_format(wb, previous_report_path=None, current_label=
     save_trend_history(trend_records_from_sheet(ws))
 
 
+def week_label(start, end):
+    return f"{start.month}/{start.day}~{end.month}/{end.day}"
+
+
+def safe_div(numerator, denominator):
+    return numerator / denominator if denominator else None
+
+
+def qoq_value(current, previous):
+    return current / previous - 1 if current is not None and previous not in (None, 0) else "-"
+
+
+def qoq_rate(current, previous):
+    return current - previous if current is not None and previous is not None else "-"
+
+
+def set_report_value(ws, row, current_col, qoq_col, previous_col, current, previous, *, qoq_kind="value", number_format="#,##0"):
+    ws.cell(row, current_col).value = current if current is not None else "-"
+    ws.cell(row, previous_col).value = previous if previous is not None else "-"
+    ws.cell(row, qoq_col).value = qoq_rate(current, previous) if qoq_kind == "rate" else qoq_value(current, previous)
+    ws.cell(row, current_col).number_format = number_format
+    ws.cell(row, previous_col).number_format = number_format
+    ws.cell(row, qoq_col).number_format = "0.0%"
+
+
+def weekly_data_source_metrics(path: Path, current_start, current_end, previous_start, previous_end):
+    if not path or not Path(path).exists():
+        return None
+    wb = load_workbook(path, read_only=False, data_only=True, keep_links=False)
+    try:
+        if "数据源" not in wb.sheetnames:
+            return None
+        ws = wb["数据源"]
+        headers = {str(ws.cell(1, col).value).strip(): col for col in range(1, ws.max_column + 1) if ws.cell(1, col).value}
+        required = ["品牌名称", "平台", "日期(周)", "GMV", "净收入", "商户补贴", "平台补贴", "有效订单量", "曝光人数", "进店人数", "下单人数", "营业时间(分)", "异常持续时间(分)", "预计损失", "评论数", "中差评数", "顾客实付", "佣金"]
+        if any(name not in headers for name in required):
+            return None
+
+        current_label = week_label(current_start, current_end)
+        previous_label = week_label(previous_start, previous_end)
+        metric_names = {
+            "gmv": "GMV",
+            "net": "净收入",
+            "merchant_subsidy": "商户补贴",
+            "platform_subsidy": "平台补贴",
+            "orders": "有效订单量",
+            "exposure": "曝光人数",
+            "visits": "进店人数",
+            "order_people": "下单人数",
+            "business_minutes": "营业时间(分)",
+            "abnormal_minutes": "异常持续时间(分)",
+            "estimated_loss": "预计损失",
+            "comments": "评论数",
+            "bad_reviews": "中差评数",
+            "customer_paid": "顾客实付",
+            "commission": "佣金",
+        }
+        empty_metrics = {name: 0.0 for name in metric_names}
+        empty_metrics["_rows"] = 0
+        result = {
+            "brand": "下酒",
+            "current_label": current_label,
+            "previous_label": previous_label,
+            "by_platform": {
+                "eleme": {current_label: empty_metrics.copy(), previous_label: empty_metrics.copy()},
+                "meituan": {current_label: empty_metrics.copy(), previous_label: empty_metrics.copy()},
+            },
+        }
+
+        # Some generated workbooks keep a stale Data Source dimension of A1:AJ1.
+        # Read a bounded row area explicitly so formula-cache issues do not hide real rows.
+        for row_idx in range(2, max(ws.max_row, 500) + 1):
+            platform = ws.cell(row_idx, headers["平台"]).value
+            period = ws.cell(row_idx, headers["日期(周)"]).value
+            if platform is None or period is None:
+                continue
+            platform = str(platform).strip()
+            period = str(period).strip()
+            if platform not in result["by_platform"] or period not in {current_label, previous_label}:
+                continue
+            brand = ws.cell(row_idx, headers["品牌名称"]).value
+            if brand:
+                result["brand"] = str(brand).strip()
+            bucket = result["by_platform"][platform][period]
+            bucket["_rows"] += 1
+            for key, header in metric_names.items():
+                bucket[key] += to_number(ws.cell(row_idx, headers[header]).value)
+
+        def add_derived(metrics):
+            metrics["take_rate"] = safe_div(metrics["net"], metrics["gmv"])
+            metrics["commission_rate"] = safe_div(metrics["commission"], metrics["net"] + metrics["commission"])
+            metrics["merchant_subsidy_rate"] = safe_div(metrics["merchant_subsidy"], metrics["gmv"])
+            metrics["platform_subsidy_rate"] = safe_div(metrics["platform_subsidy"], metrics["gmv"])
+            metrics["avg_ticket"] = safe_div(metrics["gmv"], metrics["orders"])
+            metrics["visit_rate"] = safe_div(metrics["visits"], metrics["exposure"])
+            metrics["order_rate"] = safe_div(metrics["order_people"], metrics["visits"])
+            metrics["bad_review_rate"] = safe_div(metrics["bad_reviews"], metrics["comments"])
+            metrics["daily_business_minutes"] = safe_div(metrics["business_minutes"], metrics["_rows"] * 7)
+
+        for platform_data in result["by_platform"].values():
+            for metrics in platform_data.values():
+                add_derived(metrics)
+
+        result["dual"] = {}
+        for label in [current_label, previous_label]:
+            summed = empty_metrics.copy()
+            for platform in ["eleme", "meituan"]:
+                for key in empty_metrics:
+                    summed[key] += result["by_platform"][platform][label][key]
+            add_derived(summed)
+            result["dual"][label] = summed
+        return result
+    finally:
+        wb.close()
+
+
+def write_weekly_summary_blocks_from_data_source(wb, weekly_metrics):
+    if not weekly_metrics:
+        return
+    current_label = weekly_metrics["current_label"]
+    previous_label = weekly_metrics["previous_label"]
+
+    def platform_metrics(platform, label):
+        if platform == "dual":
+            return weekly_metrics["dual"][label]
+        return weekly_metrics["by_platform"][platform][label]
+
+    overall = wb["整体业绩情况"]
+    overall.cell(3, 4).value = current_label
+    overall.cell(3, 5).value = previous_label
+    overall.cell(3, 6).value = "环比"
+
+    dual_cur = platform_metrics("dual", current_label)
+    dual_prev = platform_metrics("dual", previous_label)
+    for row, key, fmt, kind in [
+        (4, "gmv", "#,##0", "value"),
+        (5, "net", "#,##0", "value"),
+        (6, "customer_paid", "#,##0", "value"),
+        (7, "orders", "#,##0", "value"),
+        (8, "commission_rate", "0.0%", "rate"),
+        (9, "take_rate", "0.0%", "rate"),
+    ]:
+        set_report_value(overall, row, 4, 6, 5, dual_cur.get(key), dual_prev.get(key), qoq_kind=kind, number_format=fmt)
+
+    def write_platform_block(start_row, platform):
+        cur = platform_metrics(platform, current_label)
+        prev = platform_metrics(platform, previous_label)
+        rows = [
+            ("gmv", "#,##0"),
+            ("net", "#,##0"),
+            ("customer_paid", "#,##0"),
+            ("orders", "#,##0"),
+            ("take_rate", "0.0%"),
+            ("merchant_subsidy_rate", "0.0%"),
+            ("platform_subsidy_rate", "0.0%"),
+            ("commission_rate", "0.0%"),
+            ("avg_ticket", "#,##0.0"),
+            ("exposure", "#,##0"),
+            ("visit_rate", "0.0%"),
+            ("order_rate", "0.0%"),
+        ]
+        for offset, (key, number_format) in enumerate(rows):
+            set_report_value(
+                overall,
+                start_row + offset,
+                4,
+                6,
+                5,
+                cur.get(key),
+                prev.get(key),
+                qoq_kind="rate" if key.endswith("_rate") else "value",
+                number_format=number_format,
+            )
+
+    write_platform_block(10, "eleme")
+    write_platform_block(22, "meituan")
+
+    review = wb["中差评评价情况"]
+    brand_row = None
+    for row in range(1, review.max_row + 1):
+        if review.cell(row, 1).value == "品牌名：":
+            brand_row = row
+            break
+    if brand_row is None:
+        return
+
+    review.cell(brand_row, 1).value = "品牌名："
+    review.cell(brand_row, 2).value = weekly_metrics["brand"]
+    review.cell(brand_row, 3).value = "业绩维度"
+    review.cell(brand_row, 4).value = current_label
+    review.cell(brand_row, 5).value = "环比"
+    review.cell(brand_row, 6).value = previous_label
+
+    def write_review_rows(start_row, platform_label, platform_key):
+        cur = platform_metrics(platform_key, current_label)
+        prev = platform_metrics(platform_key, previous_label)
+        review.cell(start_row, 2).value = platform_label
+        for offset, key, fmt, kind in [
+            (0, "comments", "#,##0", "value"),
+            (1, "bad_reviews", "#,##0", "value"),
+            (2, "bad_review_rate", "0.0%", "rate"),
+        ]:
+            row = start_row + offset
+            review.cell(row, 3).value = ["评论数", "中差评数", "中差评率"][offset]
+            set_report_value(review, row, 4, 5, 6, cur.get(key), prev.get(key), qoq_kind=kind, number_format=fmt)
+
+    review.cell(brand_row + 1, 1).value = "评论情况"
+    write_review_rows(brand_row + 1, "饿了么", "eleme")
+    write_review_rows(brand_row + 4, "美团", "meituan")
+
+    closures = wb["异常闭店情况"]
+    closure_brand_row = None
+    for row in range(1, closures.max_row + 1):
+        if closures.cell(row, 1).value == "品牌名：":
+            closure_brand_row = row
+            break
+    if closure_brand_row is None:
+        return
+
+    closures.cell(closure_brand_row, 1).value = "品牌名："
+    closures.cell(closure_brand_row, 2).value = weekly_metrics["brand"]
+    closures.cell(closure_brand_row, 3).value = "业绩维度"
+    closures.cell(closure_brand_row, 4).value = current_label
+    closures.cell(closure_brand_row, 5).value = "环比"
+    closures.cell(closure_brand_row, 6).value = previous_label
+
+    def write_closure_rows(start_row, platform_label, platform_key):
+        cur = platform_metrics(platform_key, current_label)
+        prev = platform_metrics(platform_key, previous_label)
+        closures.cell(start_row, 2).value = platform_label
+        for offset, key in [
+            (0, "daily_business_minutes"),
+            (1, "abnormal_minutes"),
+            (2, "estimated_loss"),
+        ]:
+            row = start_row + offset
+            closures.cell(row, 3).value = ["日店均营业时间", "异常持续时间", "预计损失"][offset]
+            set_report_value(closures, row, 4, 5, 6, cur.get(key), prev.get(key), qoq_kind="value", number_format="#,##0")
+
+    closures.cell(closure_brand_row + 1, 1).value = "异常闭店"
+    write_closure_rows(closure_brand_row + 1, "饿了么", "eleme")
+    write_closure_rows(closure_brand_row + 4, "美团", "meituan")
+
+
 def apply_postprocess_workbook(wb, module, files, current_start, current_end, previous_start, previous_end, cache=None, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
     cpc = wb["CPC"]
     if "B1:G9" not in [str(rng) for rng in cpc.merged_cells.ranges]:
@@ -1336,6 +1580,9 @@ def apply_postprocess_workbook(wb, module, files, current_start, current_end, pr
             score_cell.fill = PatternFill(fill_type=None)
     if detail_end >= 2:
         remove_conditional_formatting_overlaps(review, 2, detail_end, 5, 5)
+
+    weekly_metrics = weekly_data_source_metrics(files.get("weekly"), current_start, current_end, previous_start, previous_end)
+    write_weekly_summary_blocks_from_data_source(wb, weekly_metrics)
 
     current_trend_label = f"{current_start.month}.{current_start.day}-{current_end.month}.{current_end.day}"
     apply_trend_history_and_format(wb, files.get("previousReport"), current_trend_label)

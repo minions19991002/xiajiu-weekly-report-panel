@@ -752,7 +752,7 @@ def main():
             ws.cell(i, col).value = value
             if col > 1:
                 ws.cell(i, col).number_format = "#,##0"
-    copy_range_values(weekly_blocks, ws, 83, 2, 23, 7, 2, 8)
+    write_product_top10_block(ws, current_short, ele_product_summary, mt_product_summary)
 
     # Sheet4: review details plus weekly summary.
     ws = target_wb["中差评评价情况"]
