@@ -51,6 +51,10 @@ MT_PROMO_EXCLUDE = {
 
 EXCLUDED_PRODUCT_NAMES = {"不需要餐具", "需要餐具"}
 
+STORE_SWITCH_DATE = date(2026, 7, 25)
+ZHONGJUN_STORE = {"name": "中骏世界城店", "mt_id": "14653949", "ele_id": "506336852"}
+HUAIHAI_STORE = {"name": "淮海店", "mt_id": "28476620", "ele_id": "1287990696"}
+
 
 def to_number(value, default=0.0):
     if value is None or value == "":
@@ -124,6 +128,115 @@ def in_range(df, col, start, end):
     return (df[col] >= start) & (df[col] <= end)
 
 
+def platform_key(platform):
+    text = str(platform or "").strip().lower()
+    if text in {"mt", "meituan"} or "美团" in text:
+        return "mt"
+    if text in {"ele", "eleme", "ele.me"} or "饿了么" in text:
+        return "ele"
+    return text
+
+
+def store_active_for_date(platform, store_id, value):
+    sid = id_text(store_id)
+    key = platform_key(platform)
+    day = parse_date(value)
+    if day is None:
+        return True
+    if key == "mt" and sid == ZHONGJUN_STORE["mt_id"]:
+        return day < STORE_SWITCH_DATE
+    if key == "ele" and sid == ZHONGJUN_STORE["ele_id"]:
+        return day < STORE_SWITCH_DATE
+    if key == "mt" and sid == HUAIHAI_STORE["mt_id"]:
+        return day >= STORE_SWITCH_DATE
+    if key == "ele" and sid == HUAIHAI_STORE["ele_id"]:
+        return day >= STORE_SWITCH_DATE
+    return True
+
+
+def active_store_mask(df, platform, id_col="_id", date_col="_date"):
+    if df.empty or id_col not in df.columns or date_col not in df.columns:
+        return pd.Series(True, index=df.index)
+    key = platform_key(platform)
+    ids = df[id_col].map(id_text)
+    dates = df[date_col].map(parse_date)
+    valid_day = dates.map(lambda day: day is not None and not pd.isna(day))
+    on_or_after_switch = dates.map(lambda day: day is not None and not pd.isna(day) and day >= STORE_SWITCH_DATE)
+    before_switch = dates.map(lambda day: day is not None and not pd.isna(day) and day < STORE_SWITCH_DATE)
+    mask = pd.Series(True, index=df.index)
+    if key == "mt":
+        mask &= ~((ids == ZHONGJUN_STORE["mt_id"]) & on_or_after_switch)
+        mask &= ~((ids == HUAIHAI_STORE["mt_id"]) & (~valid_day | before_switch))
+    elif key == "ele":
+        mask &= ~((ids == ZHONGJUN_STORE["ele_id"]) & on_or_after_switch)
+        mask &= ~((ids == HUAIHAI_STORE["ele_id"]) & (~valid_day | before_switch))
+    return mask
+
+
+def filter_store_rows(df, platform, allowed_ids, id_col="_id", date_col="_date", start=None, end=None):
+    allowed = {id_text(value) for value in allowed_ids if id_text(value)}
+    mask = df[id_col].map(id_text).isin(allowed)
+    if start is not None and end is not None:
+        mask &= in_range(df, date_col, start, end)
+    mask &= active_store_mask(df, platform, id_col, date_col)
+    return df[mask].copy()
+
+
+def store_active_any_in_period(store, start, end):
+    for offset in range((end - start).days + 1):
+        day = start + timedelta(days=offset)
+        mt_ok = store.get("mt_id") and store_active_for_date("mt", store.get("mt_id"), day)
+        ele_ok = store.get("ele_id") and store_active_for_date("ele", store.get("ele_id"), day)
+        if mt_ok or ele_ok:
+            return True
+    return False
+
+
+def active_days_fraction(platform, store_id, start, end):
+    days = (end - start).days + 1
+    if days <= 0:
+        return 0
+    active_days = sum(
+        1
+        for offset in range(days)
+        if store_active_for_date(platform, store_id, start + timedelta(days=offset))
+    )
+    return active_days / days
+
+
+def period_stores(stores, start, end):
+    return [store for store in stores if store_active_any_in_period(store, start, end)]
+
+
+def ensure_special_store_entries(stores, ws=None):
+    existing_mt = {store.get("mt_id") for store in stores}
+    existing_ele = {store.get("ele_id") for store in stores}
+    changed = False
+    for entry in [ZHONGJUN_STORE, HUAIHAI_STORE]:
+        if entry["mt_id"] in existing_mt or entry["ele_id"] in existing_ele:
+            continue
+        store = {
+            "name": entry["name"],
+            "mt_id": entry["mt_id"],
+            "ele_id": entry["ele_id"],
+            "norm": normalize_store_text(entry["name"]),
+        }
+        stores.append(store)
+        changed = True
+        if ws is not None:
+            ws.append([entry["name"], int(entry["mt_id"]), int(entry["ele_id"])])
+    return changed
+
+
+def platform_for_store_id(store_id, mt_ids, ele_ids):
+    sid = id_text(store_id)
+    if sid in mt_ids:
+        return "mt"
+    if sid in ele_ids:
+        return "ele"
+    return ""
+
+
 def latest_complete_week_end(max_date):
     # Monday is 0 and Sunday is 6. Weekly reports must end on a completed Sunday.
     days_since_sunday = (max_date.weekday() + 1) % 7
@@ -169,8 +282,29 @@ def match_store_name(raw, stores):
     return None
 
 
+def sheet_has_header(path, sheet_name, header):
+    try:
+        df = pd.read_excel(path, sheet_name=sheet_name, nrows=0, dtype=object, engine="openpyxl")
+    except Exception:
+        return False
+    return header in df.columns
+
+
+def resolve_sheet_for_read(path, sheet_name=0):
+    if not isinstance(sheet_name, int):
+        return sheet_name
+    with pd.ExcelFile(path, engine="openpyxl") as excel:
+        names = excel.sheet_names
+    if not names:
+        return sheet_name
+    selected = names[sheet_name] if sheet_name < len(names) else names[0]
+    if sheet_has_header(path, selected, "日期"):
+        return selected
+    return next((name for name in names if sheet_has_header(path, name, "日期")), selected)
+
+
 def read_df(path, sheet_name=0):
-    return pd.read_excel(path, sheet_name=sheet_name, dtype=object, engine="openpyxl")
+    return pd.read_excel(path, sheet_name=resolve_sheet_for_read(path, sheet_name), dtype=object, engine="openpyxl")
 
 
 def set_cell(ws, row, col, value=None, number_format=None):
@@ -476,7 +610,6 @@ def find_column(df, candidates):
 def review_summary_rating_scores(mt_ids, ele_ids):
     df = read_df(REVIEW_SUMMARY, "按门店")
     id_col = find_column(df, ["平台门店ID", "平台门店id"])
-    platform_col = find_column(df, ["外卖平台", "平台"])
     score_col = find_column(df, ["门店评分"])
     scores = {"mt": {}, "ele": {}}
     for _, row in df.iterrows():
@@ -484,10 +617,9 @@ def review_summary_rating_scores(mt_ids, ele_ids):
         score = to_optional_number(row.get(score_col))
         if not sid or score is None:
             continue
-        platform = str(row.get(platform_col) or "")
-        if sid in mt_ids or "美团" in platform:
+        if sid in mt_ids:
             scores["mt"][sid] = score
-        elif sid in ele_ids or "饿了么" in platform:
+        elif sid in ele_ids:
             scores["ele"][sid] = score
     return scores
 
@@ -548,6 +680,7 @@ def main():
                 "norm": normalize_store_text(row[0]),
             }
         )
+    ensure_special_store_entries(stores, target_ws_store)
     mt_ids = {s["mt_id"] for s in stores if s["mt_id"]}
     ele_ids = {s["ele_id"] for s in stores if s["ele_id"]}
     mt_to_name = {s["mt_id"]: s["name"] for s in stores}
@@ -572,6 +705,7 @@ def main():
     previous_dot = period_label(prev_start, prev_end, sep=".", join="-")
     current_full = full_period_label(current_start, current_end)
     previous_full = full_period_label(prev_start, prev_end)
+    current_stores = period_stores(stores, current_start, current_end)
 
     weekly_wb = load_workbook(WEEKLY, data_only=True, keep_links=False)
     weekly_summary = weekly_wb["周报综述"]
@@ -589,12 +723,8 @@ def main():
     mt_store["_id"] = mt_store["门店id"].map(id_text)
     ele_store["_id"] = ele_store["门店编号"].map(id_text)
 
-    mt_store_month = mt_store[
-        mt_store["_id"].isin(mt_ids) & in_range(mt_store, "_date", month_start, current_end)
-    ]
-    ele_store_month = ele_store[
-        ele_store["_id"].isin(ele_ids) & in_range(ele_store, "_date", month_start, current_end)
-    ]
+    mt_store_month = filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", month_start, current_end)
+    ele_store_month = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", month_start, current_end)
 
     mt_promo = read_df(MT_PROMO)
     ele_promo = read_df(ELE_PROMO)
@@ -603,15 +733,8 @@ def main():
     mt_promo["_id"] = mt_promo["门店ID"].map(id_text)
     ele_promo["_id"] = ele_promo["门店ID"].map(id_text)
 
-    mt_promo_filtered = mt_promo[
-        mt_promo["_id"].isin(mt_ids)
-        & in_range(mt_promo, "_date", month_start, current_end)
-    ].copy()
-
-    ele_promo_filtered = ele_promo[
-        ele_promo["_id"].isin(ele_ids)
-        & in_range(ele_promo, "_date", month_start, current_end)
-    ].copy()
+    mt_promo_filtered = filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", month_start, current_end)
+    ele_promo_filtered = filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", month_start, current_end)
 
     profit_ws = target_wb["26年利润额和食亨服务费"]
     month_col = current_end.month + 1
@@ -640,26 +763,35 @@ def main():
     ws.cell(6, 10).value = current_full
     ws.cell(6, 11).value = "环比"
     clear_values(ws, 7, 30, 8, 11)
-    out_row = 7
     leaderboard_rows = []
-    for row in range(4, weekly_rank.max_row + 1):
-        raw_name = weekly_rank.cell(row, 2).value
-        store_name = match_store_name(raw_name, stores)
-        if not store_name:
+    mt_store_current = filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", current_start, current_end)
+    mt_store_previous = filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", prev_start, prev_end)
+    ele_store_current = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", current_start, current_end)
+    ele_store_previous = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", prev_start, prev_end)
+    for store in current_stores:
+        prev_value = (
+            mt_store_previous[mt_store_previous["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+            + ele_store_previous[ele_store_previous["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
+        )
+        cur_value = (
+            mt_store_current[mt_store_current["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+            + ele_store_current[ele_store_current["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
+        )
+        store_name = store["name"]
+        if cur_value == 0 and prev_value == 0:
             continue
-        prev_value = to_number(weekly_rank.cell(row, 6).value)
-        cur_value = to_number(weekly_rank.cell(row, 7).value)
+        leaderboard_rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
+    leaderboard_rows.sort(key=lambda row: (-999 if row[3] is None else row[3]), reverse=True)
+    out_row = 7
+    for store_name, prev_value, cur_value, ratio in leaderboard_rows[: len(current_stores)]:
         ws.cell(out_row, 8).value = store_name
         ws.cell(out_row, 9).value = round(prev_value)
         ws.cell(out_row, 10).value = round(cur_value)
-        ws.cell(out_row, 11).value = qoq(cur_value, prev_value)
+        ws.cell(out_row, 11).value = ratio
         ws.cell(out_row, 9).number_format = "#,##0"
         ws.cell(out_row, 10).number_format = "#,##0"
         ws.cell(out_row, 11).number_format = "0.0%"
-        leaderboard_rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
         out_row += 1
-        if out_row >= 7 + len(stores):
-            break
     for row in range(7, out_row):
         ratio = ws.cell(row, 11).value
         fill = "00B050" if ratio is not None and ratio >= 0 else "FF0000"
@@ -672,9 +804,11 @@ def main():
     ws.cell(2, 3).value = previous_short
     ws.cell(2, 5).value = current_short
     ws.cell(2, 6).value = previous_short
-    current_scores = review_summary_rating_scores(mt_ids, ele_ids)
+    current_mt_ids = {store["mt_id"] for store in current_stores if store["mt_id"]}
+    current_ele_ids = {store["ele_id"] for store in current_stores if store["ele_id"]}
+    current_scores = review_summary_rating_scores(current_mt_ids, current_ele_ids)
     previous_scores = previous_rating_scores(target_wb)
-    for idx, store in enumerate(stores, start=3):
+    for idx, store in enumerate(current_stores, start=3):
         ws.cell(idx, 1).value = store["name"]
         for start_col, platform, sid in [(2, "ele", store["ele_id"]), (5, "mt", store["mt_id"])]:
             cur = current_scores[platform].get(sid)
@@ -693,8 +827,8 @@ def main():
     ele_goods["_id"] = ele_goods["门店编号"].map(id_text)
     mt_goods["_product"] = mt_goods["商品名"].map(normalize_product)
     ele_goods["_product"] = ele_goods["商品名称"].map(normalize_product)
-    mt_goods = mt_goods[mt_goods["_id"].isin(mt_ids)].copy()
-    ele_goods = ele_goods[ele_goods["_id"].isin(ele_ids)].copy()
+    mt_goods = filter_store_rows(mt_goods, "mt", mt_ids, "_id", "_date")
+    ele_goods = filter_store_rows(ele_goods, "ele", ele_ids, "_id", "_date")
     mt_goods = mt_goods[~mt_goods["_product"].isin(EXCLUDED_PRODUCT_NAMES)].copy()
     ele_goods = ele_goods[~ele_goods["_product"].isin(EXCLUDED_PRODUCT_NAMES)].copy()
     mt_cur, mt_prev = period_agg_rows(mt_goods, "_date", current_start, current_end, prev_start, prev_end)
@@ -769,6 +903,10 @@ def main():
         & in_range(review_df, "_date", current_start, current_end)
         & (review_df["综合评分"].map(to_number) <= 3)
     ].copy()
+    review_df["_platform_key"] = review_df["_platform_id"].map(lambda sid: platform_for_store_id(sid, mt_ids, ele_ids))
+    review_df = review_df[
+        review_df.apply(lambda row: store_active_for_date(row["_platform_key"], row["_platform_id"], row["_date"]), axis=1)
+    ].copy()
     review_df = review_df.sort_values(["_date", "外卖平台", "平台门店名称"])
     review_headers = [
         "平台门店名称",
@@ -825,6 +963,10 @@ def main():
         loss_df["_platform_id"].isin(mt_ids | ele_ids)
         & in_range(loss_df, "_date", current_start, current_end)
     ].copy()
+    loss_df["_platform_key"] = loss_df["_platform_id"].map(lambda sid: platform_for_store_id(sid, mt_ids, ele_ids))
+    loss_df = loss_df[
+        loss_df.apply(lambda row: store_active_for_date(row["_platform_key"], row["_platform_id"], row["_date"]), axis=1)
+    ].copy()
     loss_df = loss_df.sort_values(["_date", "外卖平台", "平台门店名称"])
     loss_headers = ["平台门店名称", "外卖平台", "日期", "异常时间（分钟）", "营业时长（分钟）", "预计损失（元）"]
     for idx, (_, row) in enumerate(loss_df.iterrows(), start=2):
@@ -868,10 +1010,7 @@ def main():
     ws.cell(1, 2).value = None
     clear_values(ws, 62, 62, 1, 18)
 
-    mt_promo_cpc = mt_promo[
-        mt_promo["_id"].isin(mt_ids)
-        & in_range(mt_promo, "_date", prev_start, current_end)
-    ].copy()
+    mt_promo_cpc = filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", prev_start, current_end)
     mt_cur, mt_prev = period_agg_rows(mt_promo_cpc, "_date", current_start, current_end, prev_start, prev_end)
 
     def mt_metrics(df):
@@ -901,7 +1040,7 @@ def main():
     ws.cell(14, 3).value = "合计"
     write_metric_block(ws, 14, with_roi(mt_total_cur_metrics, mt_total_prev_metrics))
     write_metric_block(ws, 17, with_roi(mt_total_cur_metrics, mt_total_prev_metrics))
-    for idx, store in enumerate(stores, start=18):
+    for idx, store in enumerate(current_stores, start=18):
         ws.cell(idx, 1).value = int(store["mt_id"]) if store["mt_id"].isdigit() else store["mt_id"]
         ws.cell(idx, 2).value = store["name"]
         ws.cell(idx, 3).value = "合计"
@@ -910,7 +1049,7 @@ def main():
         write_metric_block(ws, idx, with_roi(cur_metrics, prev_metrics))
 
     # Eleme CPC estimates promoted orders from visit lift, then applies store conversion and average income.
-    ele_store_cpc = ele_store[ele_store["_id"].isin(ele_ids)].copy()
+    ele_store_cpc = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", prev_start, current_end)
     store_ratio = {}
     for _, row in ele_store_cpc.iterrows():
         sid = id_text(row.get("门店编号"))
@@ -923,10 +1062,7 @@ def main():
         avg_income = income / valid_orders if valid_orders else 0
         store_ratio[(sid, d)] = (order_rate, avg_income)
 
-    ele_promo_cpc = ele_promo[
-        ele_promo["_id"].isin(ele_ids)
-        & in_range(ele_promo, "_date", prev_start, current_end)
-    ].copy()
+    ele_promo_cpc = filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", prev_start, current_end)
     est_orders = []
     est_revenue = []
     for _, row in ele_promo_cpc.iterrows():
@@ -955,7 +1091,7 @@ def main():
     ws.cell(37, 3).value = "合计"
     write_metric_block(ws, 37, with_roi(ele_total_cur_metrics, ele_total_prev_metrics))
     write_metric_block(ws, 41, with_roi(ele_total_cur_metrics, ele_total_prev_metrics))
-    for idx, store in enumerate(stores, start=42):
+    for idx, store in enumerate(current_stores, start=42):
         ws.cell(idx, 1).value = int(store["ele_id"]) if store["ele_id"].isdigit() else store["ele_id"]
         ws.cell(idx, 2).value = store["name"]
         ws.cell(idx, 3).value = "合计"
@@ -970,8 +1106,15 @@ def main():
     total_promo_prev_revenue = mt_total_prev_metrics["revenue"] + ele_total_prev_metrics["revenue"]
     total_promo_roi = safe_ratio(total_promo_revenue, total_promo_spend)
     promo_revenue_delta = total_promo_revenue - total_promo_prev_revenue
-    top_up = max(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else -999)
-    top_down = min(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else 999)
+    if leaderboard_rows:
+        top_up = max(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else -999)
+        top_down = min(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else 999)
+        analysis_lines = (
+            f"①{top_up[0]}：本周实收{fmt_money(top_up[2])}，环比{fmt_pct(top_up[3])}，为本周增幅最高门店。\n"
+            f"②{top_down[0]}：本周实收{fmt_money(top_down[2])}，环比{fmt_pct(top_down[3])}，为本周降幅最高门店。"
+        )
+    else:
+        analysis_lines = "本期无可用于排行榜的门店数据。"
     narrative = (
         "整体：\n"
         f"1、本周双平台营业额{fmt_money(weekly_summary.cell(3, 5).value)}，环比{fmt_pct(weekly_summary.cell(3, 7).value)}；"
@@ -980,8 +1123,7 @@ def main():
         f"2、本周推广共计消耗{fmt_money(total_promo_spend)}，整体ROI为{fmt_roi(total_promo_roi)}，"
         f"推广带来实收{fmt_money(total_promo_revenue)}，环比{'增加' if promo_revenue_delta >= 0 else '减少'}{fmt_money(abs(promo_revenue_delta))}。\n\n"
         "门店分析：\n"
-        f"①{top_up[0]}：本周实收{fmt_money(top_up[2])}，环比{fmt_pct(top_up[3])}，为本周增幅最高门店。\n"
-        f"②{top_down[0]}：本周实收{fmt_money(top_down[2])}，环比{fmt_pct(top_down[3])}，为本周降幅最高门店。"
+        f"{analysis_lines}"
     )
     ws_overall["M4"].value = narrative
     ws_overall["M4"].alignment = Alignment(vertical="top", wrap_text=True)

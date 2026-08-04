@@ -594,6 +594,8 @@ class SheetReadCache:
 
     def resolve_sheet(self, path, sheet_name=0):
         if isinstance(sheet_name, int):
+            if hasattr(self.module, "resolve_sheet_for_read"):
+                return self.module.resolve_sheet_for_read(path, sheet_name)
             return sheet_name
         key = str(Path(path))
         if key not in self.sheet_names:
@@ -622,6 +624,8 @@ def smart_read_df(module, path, sheet_name=0, cache: SheetReadCache | None = Non
     if cache is not None:
         return cache.read_df(path, sheet_name)
     if isinstance(sheet_name, int):
+        if hasattr(module, "read_df"):
+            return module.read_df(path, sheet_name)
         return module.pd.read_excel(path, sheet_name=sheet_name, dtype=object, engine="openpyxl")
     with module.pd.ExcelFile(path, engine="openpyxl") as excel:
         names = excel.sheet_names
@@ -850,20 +854,25 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
     ele_promo["_id"] = ele_promo["门店ID"].map(id_text)
     ele_store["_id"] = ele_store["门店编号"].map(id_text)
 
-    mt = mt_promo[
-        mt_promo["_id"].isin(mt_ids)
-        & (mt_promo["_date"] >= previous_start)
-        & (mt_promo["_date"] <= current_end)
-    ].copy()
-
-    ele = ele_promo[
-        ele_promo["_id"].isin(ele_ids)
-        & (ele_promo["_date"] >= previous_start)
-        & (ele_promo["_date"] <= current_end)
-    ].copy()
+    if hasattr(module, "filter_store_rows"):
+        mt = module.filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", previous_start, current_end)
+        ele = module.filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", previous_start, current_end)
+        ele_store_scoped = module.filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", previous_start, current_end)
+    else:
+        mt = mt_promo[
+            mt_promo["_id"].isin(mt_ids)
+            & (mt_promo["_date"] >= previous_start)
+            & (mt_promo["_date"] <= current_end)
+        ].copy()
+        ele = ele_promo[
+            ele_promo["_id"].isin(ele_ids)
+            & (ele_promo["_date"] >= previous_start)
+            & (ele_promo["_date"] <= current_end)
+        ].copy()
+        ele_store_scoped = ele_store[ele_store["_id"].isin(ele_ids)].copy()
 
     ratio_by_store_date = {}
-    for _, row in ele_store[ele_store["_id"].isin(ele_ids)].iterrows():
+    for _, row in ele_store_scoped.iterrows():
         visits = to_number(row.get("进店人数"))
         orders = to_number(row.get("下单人数"))
         income = to_number(row.get("收入"))
@@ -898,12 +907,8 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
 
 
 def update_m4_narrative(wb, module, files, current_start, current_end, previous_start, previous_end, cache=None, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
-    store_ws = wb["门店明细"]
-    stores = []
-    for row in store_ws.iter_rows(min_row=2, values_only=True):
-        if not row[0]:
-            continue
-        stores.append({"name": str(row[0]).strip(), "mt_id": id_text(row[1]), "ele_id": id_text(row[2])})
+    stores = workbook_stores(wb, module)
+    current_stores = module.period_stores(stores, current_start, current_end) if hasattr(module, "period_stores") else stores
 
     mt_store = smart_read_df(module, files["mtStore"], "门店_全部门店", cache)
     ele_store = smart_read_df(module, files["eleStore"], "data", cache)
@@ -911,6 +916,18 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
     ele_store["_date"] = ele_store["日期"].map(module.parse_date)
     mt_store["_id"] = mt_store["门店id"].map(id_text)
     ele_store["_id"] = ele_store["门店编号"].map(id_text)
+    mt_ids = {store["mt_id"] for store in stores if store["mt_id"]}
+    ele_ids = {store["ele_id"] for store in stores if store["ele_id"]}
+    if hasattr(module, "filter_store_rows"):
+        mt_store_current = module.filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", current_start, current_end)
+        mt_store_previous = module.filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", previous_start, previous_end)
+        ele_store_current = module.filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", current_start, current_end)
+        ele_store_previous = module.filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", previous_start, previous_end)
+    else:
+        mt_store_current = mt_store[(mt_store["_date"] >= current_start) & (mt_store["_date"] <= current_end)]
+        mt_store_previous = mt_store[(mt_store["_date"] >= previous_start) & (mt_store["_date"] <= previous_end)]
+        ele_store_current = ele_store[(ele_store["_date"] >= current_start) & (ele_store["_date"] <= current_end)]
+        ele_store_previous = ele_store[(ele_store["_date"] >= previous_start) & (ele_store["_date"] <= previous_end)]
 
     mt_fields = {
         "revenue": "营业收入",
@@ -933,19 +950,11 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
     overall_previous_orders = 0
     focus = []
 
-    for store in stores:
-        mt_cur_df = mt_store[
-            (mt_store["_id"] == store["mt_id"]) & (mt_store["_date"] >= current_start) & (mt_store["_date"] <= current_end)
-        ]
-        mt_prev_df = mt_store[
-            (mt_store["_id"] == store["mt_id"]) & (mt_store["_date"] >= previous_start) & (mt_store["_date"] <= previous_end)
-        ]
-        ele_cur_df = ele_store[
-            (ele_store["_id"] == store["ele_id"]) & (ele_store["_date"] >= current_start) & (ele_store["_date"] <= current_end)
-        ]
-        ele_prev_df = ele_store[
-            (ele_store["_id"] == store["ele_id"]) & (ele_store["_date"] >= previous_start) & (ele_store["_date"] <= previous_end)
-        ]
+    for store in current_stores:
+        mt_cur_df = mt_store_current[mt_store_current["_id"] == store["mt_id"]]
+        mt_prev_df = mt_store_previous[mt_store_previous["_id"] == store["mt_id"]]
+        ele_cur_df = ele_store_current[ele_store_current["_id"] == store["ele_id"]]
+        ele_prev_df = ele_store_previous[ele_store_previous["_id"] == store["ele_id"]]
         mt_cur = metric_snapshot(mt_cur_df, mt_fields)
         mt_prev = metric_snapshot(mt_prev_df, mt_fields)
         ele_cur = metric_snapshot(ele_cur_df, ele_fields)
@@ -1309,7 +1318,27 @@ def set_report_value(ws, row, current_col, qoq_col, previous_col, current, previ
     ws.cell(row, qoq_col).number_format = "0.0%"
 
 
-def weekly_data_source_metrics(path: Path, current_start, current_end, previous_start, previous_end):
+def workbook_stores(wb, module=None):
+    store_ws = wb["门店明细"]
+    stores = []
+    normalizer = getattr(module, "normalize_store_text", lambda value: str(value or "").strip())
+    for row in store_ws.iter_rows(min_row=2, values_only=True):
+        if not row[0]:
+            continue
+        stores.append(
+            {
+                "name": str(row[0]).strip(),
+                "mt_id": id_text(row[1]),
+                "ele_id": id_text(row[2]),
+                "norm": normalizer(row[0]),
+            }
+        )
+    if module and hasattr(module, "ensure_special_store_entries"):
+        module.ensure_special_store_entries(stores)
+    return stores
+
+
+def weekly_data_source_metrics(path: Path, current_start, current_end, previous_start, previous_end, stores=None, module=None):
     if not path or not Path(path).exists():
         return None
     wb = load_workbook(path, read_only=False, data_only=True, keep_links=False)
@@ -1324,6 +1353,13 @@ def weekly_data_source_metrics(path: Path, current_start, current_end, previous_
 
         current_label = week_label(current_start, current_end)
         previous_label = week_label(previous_start, previous_end)
+        period_bounds = {
+            current_label: (current_start, current_end),
+            previous_label: (previous_start, previous_end),
+        }
+        mt_ids = {store["mt_id"] for store in stores or [] if store.get("mt_id")}
+        ele_ids = {store["ele_id"] for store in stores or [] if store.get("ele_id")}
+        store_id_col = headers.get("门店ID")
         metric_names = {
             "gmv": "GMV",
             "net": "净收入",
@@ -1364,13 +1400,26 @@ def weekly_data_source_metrics(path: Path, current_start, current_end, previous_
             period = str(period).strip()
             if platform not in result["by_platform"] or period not in {current_label, previous_label}:
                 continue
+            platform_key = "mt" if platform == "meituan" else "ele"
+            fraction = 1
+            if store_id_col and stores:
+                sid = id_text(ws.cell(row_idx, store_id_col).value)
+                if platform_key == "mt" and sid not in mt_ids:
+                    continue
+                if platform_key == "ele" and sid not in ele_ids:
+                    continue
+                start, end = period_bounds[period]
+                if module and hasattr(module, "active_days_fraction"):
+                    fraction = module.active_days_fraction(platform_key, sid, start, end)
+                if not fraction:
+                    continue
             brand = ws.cell(row_idx, headers["品牌名称"]).value
             if brand:
                 result["brand"] = str(brand).strip()
             bucket = result["by_platform"][platform][period]
-            bucket["_rows"] += 1
+            bucket["_rows"] += fraction
             for key, header in metric_names.items():
-                bucket[key] += to_number(ws.cell(row_idx, headers[header]).value)
+                bucket[key] += to_number(ws.cell(row_idx, headers[header]).value) * fraction
 
         def add_derived(metrics):
             metrics["take_rate"] = safe_div(metrics["net"], metrics["gmv"])
@@ -1581,7 +1630,8 @@ def apply_postprocess_workbook(wb, module, files, current_start, current_end, pr
     if detail_end >= 2:
         remove_conditional_formatting_overlaps(review, 2, detail_end, 5, 5)
 
-    weekly_metrics = weekly_data_source_metrics(files.get("weekly"), current_start, current_end, previous_start, previous_end)
+    stores = workbook_stores(wb, module)
+    weekly_metrics = weekly_data_source_metrics(files.get("weekly"), current_start, current_end, previous_start, previous_end, stores, module)
     write_weekly_summary_blocks_from_data_source(wb, weekly_metrics)
 
     current_trend_label = f"{current_start.month}.{current_start.day}-{current_end.month}.{current_end.day}"
