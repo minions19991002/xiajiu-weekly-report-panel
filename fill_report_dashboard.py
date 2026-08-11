@@ -839,6 +839,44 @@ def platform_line(platform, change):
     )
 
 
+MT_PROMO_PRODUCT_EXCLUDES = {
+    "津贴联盟",
+    "赏金联盟",
+    "流量助手",
+    "金字招牌",
+    "袋鼠店长",
+    "品牌装修",
+    "应用市场",
+    "短信通",
+    "拼好饭",
+}
+ELE_PROMO_PRODUCT_EXCLUDES = {"增量助手"}
+
+
+def text_value(value):
+    if value is None:
+        return ""
+    try:
+        if value != value:
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
+def preview_filter_promo_products(module, df, platform):
+    if hasattr(module, "filter_promo_products"):
+        return module.filter_promo_products(df, platform)
+    result = df.copy()
+    if platform == "mt":
+        for col in ("推广产品", "场景"):
+            if col in result.columns:
+                result = result[~result[col].map(text_value).isin(MT_PROMO_PRODUCT_EXCLUDES)].copy()
+    elif platform == "ele" and "推广产品" in result.columns:
+        result = result[~result["推广产品"].map(text_value).isin(ELE_PROMO_PRODUCT_EXCLUDES)].copy()
+    return result
+
+
 def promo_metrics(module, files, stores, current_start, current_end, previous_start, previous_end, cache=None, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
     mt_ids = {store["mt_id"] for store in stores if store["mt_id"]}
     ele_ids = {store["ele_id"] for store in stores if store["ele_id"]}
@@ -870,6 +908,9 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
             & (ele_promo["_date"] <= current_end)
         ].copy()
         ele_store_scoped = ele_store[ele_store["_id"].isin(ele_ids)].copy()
+
+    mt = preview_filter_promo_products(module, mt, "mt")
+    ele = preview_filter_promo_products(module, ele, "ele")
 
     ratio_by_store_date = {}
     for _, row in ele_store_scoped.iterrows():

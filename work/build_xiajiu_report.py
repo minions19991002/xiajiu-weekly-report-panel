@@ -48,6 +48,7 @@ MT_PROMO_EXCLUDE = {
     "短信通",
     "拼好饭",
 }
+ELE_PROMO_EXCLUDE = {"增量助手"}
 
 EXCLUDED_PRODUCT_NAMES = {"不需要餐具", "需要餐具"}
 
@@ -180,6 +181,31 @@ def filter_store_rows(df, platform, allowed_ids, id_col="_id", date_col="_date",
         mask &= in_range(df, date_col, start, end)
     mask &= active_store_mask(df, platform, id_col, date_col)
     return df[mask].copy()
+
+
+def text_value(value):
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
+def filter_promo_products(df, platform):
+    if df.empty:
+        return df.copy()
+    result = df.copy()
+    key = platform_key(platform)
+    if key == "mt":
+        for col in ("推广产品", "场景"):
+            if col in result.columns:
+                result = result[~result[col].map(text_value).isin(MT_PROMO_EXCLUDE)].copy()
+    elif key == "ele" and "推广产品" in result.columns:
+        result = result[~result["推广产品"].map(text_value).isin(ELE_PROMO_EXCLUDE)].copy()
+    return result
 
 
 def store_active_any_in_period(store, start, end):
@@ -733,8 +759,14 @@ def main():
     mt_promo["_id"] = mt_promo["门店ID"].map(id_text)
     ele_promo["_id"] = ele_promo["门店ID"].map(id_text)
 
-    mt_promo_filtered = filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", month_start, current_end)
-    ele_promo_filtered = filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", month_start, current_end)
+    mt_promo_filtered = filter_promo_products(
+        filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", month_start, current_end),
+        "mt",
+    )
+    ele_promo_filtered = filter_promo_products(
+        filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", month_start, current_end),
+        "ele",
+    )
 
     profit_ws = target_wb["26年利润额和食亨服务费"]
     month_col = current_end.month + 1
@@ -1010,7 +1042,10 @@ def main():
     ws.cell(1, 2).value = None
     clear_values(ws, 62, 62, 1, 18)
 
-    mt_promo_cpc = filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", prev_start, current_end)
+    mt_promo_cpc = filter_promo_products(
+        filter_store_rows(mt_promo, "mt", mt_ids, "_id", "_date", prev_start, current_end),
+        "mt",
+    )
     mt_cur, mt_prev = period_agg_rows(mt_promo_cpc, "_date", current_start, current_end, prev_start, prev_end)
 
     def mt_metrics(df):
@@ -1062,7 +1097,10 @@ def main():
         avg_income = income / valid_orders if valid_orders else 0
         store_ratio[(sid, d)] = (order_rate, avg_income)
 
-    ele_promo_cpc = filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", prev_start, current_end)
+    ele_promo_cpc = filter_promo_products(
+        filter_store_rows(ele_promo, "ele", ele_ids, "_id", "_date", prev_start, current_end),
+        "ele",
+    )
     est_orders = []
     est_revenue = []
     for _, row in ele_promo_cpc.iterrows():
