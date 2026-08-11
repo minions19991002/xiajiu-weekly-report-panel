@@ -785,8 +785,8 @@ def main():
     out_row = 7
     for store_name, prev_value, cur_value, ratio in leaderboard_rows[: len(current_stores)]:
         ws.cell(out_row, 8).value = store_name
-        ws.cell(out_row, 9).value = round(prev_value)
-        ws.cell(out_row, 10).value = round(cur_value)
+        ws.cell(out_row, 9).value = prev_value
+        ws.cell(out_row, 10).value = cur_value
         ws.cell(out_row, 11).value = ratio
         ws.cell(out_row, 9).number_format = "#,##0"
         ws.cell(out_row, 10).number_format = "#,##0"
@@ -1071,7 +1071,7 @@ def main():
         order_rate, avg_income = store_ratio.get((sid, d), (0, 0))
         revenue_orders = to_number(row.get("进店提升数")) * ELE_VISIT_LIFT_TO_VISITOR_RATE * order_rate
         orders = revenue_orders
-        revenue = revenue_orders * avg_income
+        revenue = to_number(row.get("推广现金消费(元)")) * to_number(row.get("ROI"))
         est_orders.append(orders)
         est_revenue.append(revenue)
     ele_promo_cpc["_est_orders"] = est_orders

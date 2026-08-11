@@ -161,7 +161,7 @@ HTML = r"""<!doctype html>
         <section class="parameter-panel">
           <div class="parameter-copy">
             <strong>饿了么进店提升换算系数</strong>
-            <span>用于推广订单数和推广实收：订单数 = 进店提升数 × 系数 × 下单率；实收 = 订单数 × 客单价。默认 0.7；也可以输入 70%。</span>
+            <span>用于推广订单数：订单数 = 进店提升数 × 系数 × 下单率。推广实收 = 推广现金消费(元) × ROI。默认 0.7；也可以输入 70%。</span>
           </div>
           <input id="eleVisitLiftRate" type="text" value="0.7" inputmode="decimal" />
         </section>
@@ -883,8 +883,7 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
         )
 
     def ele_revenue(row):
-        order_rate, avg_income = ratio_by_store_date.get((id_text(row.get("门店ID")), row.get("_date")), (0, 0))
-        return to_number(row.get("进店提升数")) * ele_visit_lift_rate * order_rate * avg_income
+        return to_number(row.get("推广现金消费(元)")) * to_number(row.get("ROI"))
 
     ele["_est_revenue"] = ele.apply(ele_revenue, axis=1)
     mt_cur = mt[(mt["_date"] >= current_start) & (mt["_date"] <= current_end)]
@@ -1613,8 +1612,8 @@ def apply_postprocess_workbook(wb, module, files, current_start, current_end, pr
             continue
         for col_idx in [9, 10]:
             cell = overall.cell(row_idx, col_idx)
-            number = to_number(cell.value)
-            cell.value = round(number)
+            if cell.value not in (None, ""):
+                cell.value = to_number(cell.value)
             cell.number_format = "#,##0"
 
     review = wb["中差评评价情况"]
