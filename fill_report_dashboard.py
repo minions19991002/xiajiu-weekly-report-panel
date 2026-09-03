@@ -704,6 +704,16 @@ def font_with(font, *, name=None, size=None, color=None):
     return new_font
 
 
+def apply_review_reply_font_rule(ws, row_idx, max_col=14, status_col=12):
+    for col_idx in range(1, max_col + 1):
+        cell = ws.cell(row_idx, col_idx)
+        if not isinstance(cell, MergedCell):
+            cell.font = font_with(cell.font, color="FF000000")
+    status_cell = ws.cell(row_idx, status_col)
+    if not isinstance(status_cell, MergedCell) and str(status_cell.value or "").strip() == "未回复":
+        status_cell.font = font_with(status_cell.font, color="FFFF0000")
+
+
 def remove_conditional_formatting_overlaps(ws, min_row, max_row, min_col, max_col):
     for conditional_formatting in list(ws.conditional_formatting._cf_rules):
         should_remove = False
@@ -1665,10 +1675,10 @@ def apply_postprocess_workbook(wb, module, files, current_start, current_end, pr
         detail_end = row_idx
         score_cell = review.cell(row_idx, 5)
         if not isinstance(score_cell, MergedCell):
-            score_cell.font = font_with(score_cell.font, color="FF000000")
             score_cell.fill = PatternFill(fill_type=None)
+        apply_review_reply_font_rule(review, row_idx)
     if detail_end >= 2:
-        remove_conditional_formatting_overlaps(review, 2, detail_end, 5, 5)
+        remove_conditional_formatting_overlaps(review, 2, detail_end, 1, 14)
 
     stores = workbook_stores(wb, module)
     weekly_metrics = weekly_data_source_metrics(files.get("weekly"), current_start, current_end, previous_start, previous_end, stores, module)

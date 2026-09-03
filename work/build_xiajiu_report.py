@@ -234,6 +234,67 @@ def period_stores(stores, start, end):
     return [store for store in stores if store_active_any_in_period(store, start, end)]
 
 
+def weekly_rank_leaderboard_rows(ws, stores, previous_label, current_label):
+    if ws is None:
+        return []
+    max_row = ws.max_row or 0
+    max_col = min(ws.max_column or 0, 80)
+    header = None
+    for row in range(1, min(max_row, 20) + 1):
+        values = {col: text_value(ws.cell(row, col).value) for col in range(1, max_col + 1)}
+        name_cols = [col for col, value in values.items() if value == "外卖通门店名称"]
+        for name_col in name_cols:
+            scan_end = min(max_col, name_col + 12)
+            prev_col = next(
+                (col for col in range(name_col + 1, scan_end + 1) if text_value(ws.cell(row, col).value) == previous_label),
+                None,
+            )
+            cur_col = next(
+                (col for col in range(name_col + 1, scan_end + 1) if text_value(ws.cell(row, col).value) == current_label),
+                None,
+            )
+            if prev_col and cur_col:
+                platform_col = next(
+                    (col for col in range(name_col + 1, min(scan_end, name_col + 4) + 1)
+                     if text_value(ws.cell(row, col).value) == "外卖平台"),
+                    None,
+                )
+                header = (row, name_col, platform_col, prev_col, cur_col)
+                break
+        if header:
+            break
+    if not header:
+        return []
+
+    header_row, name_col, platform_col, prev_col, cur_col = header
+    rows = []
+    empty_seen = 0
+    for row in range(header_row + 1, max_row + 1):
+        raw_name = text_value(ws.cell(row, name_col).value)
+        if not raw_name:
+            empty_seen += 1
+            if empty_seen >= 2 and rows:
+                break
+            continue
+        empty_seen = 0
+        platform = text_value(ws.cell(row, platform_col).value) if platform_col else "全平台"
+        if platform and platform not in {"全平台", "双平台"}:
+            continue
+        store_name = match_store_name(raw_name, stores)
+        if not store_name:
+            continue
+        prev_value = to_optional_number(ws.cell(row, prev_col).value)
+        cur_value = to_optional_number(ws.cell(row, cur_col).value)
+        if prev_value is None and cur_value is None:
+            continue
+        prev_value = prev_value or 0
+        cur_value = cur_value or 0
+        if prev_value == 0 and cur_value == 0:
+            continue
+        rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
+    return rows
+
+
 def ensure_special_store_entries(stores, ws=None):
     existing_mt = {store.get("mt_id") for store in stores}
     existing_ele = {store.get("ele_id") for store in stores}
@@ -376,6 +437,16 @@ def copy_font_with_overrides(font, *, name=None, size=None, color=None):
     if color is not None:
         new_font.color = color
     return new_font
+
+
+def apply_review_reply_font_rule(ws, row_idx, max_col=14, status_col=12):
+    for col in range(1, max_col + 1):
+        cell = ws.cell(row_idx, col)
+        if not isinstance(cell, MergedCell):
+            cell.font = copy_font_with_overrides(cell.font, color="FF000000")
+    status_cell = ws.cell(row_idx, status_col)
+    if not isinstance(status_cell, MergedCell) and str(status_cell.value or "").strip() == "未回复":
+        status_cell.font = copy_font_with_overrides(status_cell.font, color="FFFF0000")
 
 
 def capture_row_styles(ws, row, max_col):
@@ -795,25 +866,26 @@ def main():
     ws.cell(6, 10).value = current_full
     ws.cell(6, 11).value = "环比"
     clear_values(ws, 7, 30, 8, 11)
-    leaderboard_rows = []
     mt_store_current = filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", current_start, current_end)
     mt_store_previous = filter_store_rows(mt_store, "mt", mt_ids, "_id", "_date", prev_start, prev_end)
     ele_store_current = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", current_start, current_end)
     ele_store_previous = filter_store_rows(ele_store, "ele", ele_ids, "_id", "_date", prev_start, prev_end)
-    for store in current_stores:
-        prev_value = (
-            mt_store_previous[mt_store_previous["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
-            + ele_store_previous[ele_store_previous["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
-        )
-        cur_value = (
-            mt_store_current[mt_store_current["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
-            + ele_store_current[ele_store_current["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
-        )
-        store_name = store["name"]
-        if cur_value == 0 and prev_value == 0:
-            continue
-        leaderboard_rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
-    leaderboard_rows.sort(key=lambda row: (-999 if row[3] is None else row[3]), reverse=True)
+    leaderboard_rows = weekly_rank_leaderboard_rows(weekly_rank, current_stores, previous_full, current_full)
+    if not leaderboard_rows:
+        for store in current_stores:
+            prev_value = (
+                mt_store_previous[mt_store_previous["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+                + ele_store_previous[ele_store_previous["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
+            )
+            cur_value = (
+                mt_store_current[mt_store_current["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+                + ele_store_current[ele_store_current["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
+            )
+            store_name = store["name"]
+            if cur_value == 0 and prev_value == 0:
+                continue
+            leaderboard_rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
+        leaderboard_rows.sort(key=lambda row: (-999 if row[3] is None else row[3]), reverse=True)
     out_row = 7
     for store_name, prev_value, cur_value, ratio in leaderboard_rows[: len(current_stores)]:
         ws.cell(out_row, 8).value = store_name
@@ -969,9 +1041,9 @@ def main():
             ws.cell(idx, col).value = value
         for col in [5, 6, 7, 8]:
             ws.cell(idx, col).number_format = "0.0"
-        ws.cell(idx, 5).font = copy_font_with_overrides(ws.cell(idx, 5).font, color="FF000000")
+        apply_review_reply_font_rule(ws, idx, len(review_headers), review_headers.index("商户回复状态") + 1)
         ws.cell(idx, 5).fill = PatternFill(fill_type=None)
-    remove_conditional_formatting_overlaps(ws, 2, 1 + len(review_df), 5, 5)
+    remove_conditional_formatting_overlaps(ws, 2, 1 + len(review_df), 1, len(review_headers))
     summary_start = 2 + len(review_df) + 2
     for offset in range(7):
         apply_row_styles(ws, summary_start + offset, summary_styles[offset])
