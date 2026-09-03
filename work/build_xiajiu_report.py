@@ -885,7 +885,7 @@ def main():
             if cur_value == 0 and prev_value == 0:
                 continue
             leaderboard_rows.append((store_name, prev_value, cur_value, qoq(cur_value, prev_value)))
-        leaderboard_rows.sort(key=lambda row: (-999 if row[3] is None else row[3]), reverse=True)
+    leaderboard_rows.sort(key=lambda row: (-999 if row[3] is None else row[3]), reverse=True)
     out_row = 7
     for store_name, prev_value, cur_value, ratio in leaderboard_rows[: len(current_stores)]:
         ws.cell(out_row, 8).value = store_name
