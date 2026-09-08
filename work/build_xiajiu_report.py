@@ -580,6 +580,10 @@ def qoq(current, previous):
     return current / previous - 1
 
 
+def is_material_revenue_decline(value):
+    return value is not None and round(value * 100, 1) < -10.0
+
+
 def fmt_int(value):
     return f"{to_number(value):,.0f}"
 
@@ -1216,15 +1220,15 @@ def main():
     total_promo_prev_revenue = mt_total_prev_metrics["revenue"] + ele_total_prev_metrics["revenue"]
     total_promo_roi = safe_ratio(total_promo_revenue, total_promo_spend)
     promo_revenue_delta = total_promo_revenue - total_promo_prev_revenue
-    if leaderboard_rows:
-        top_up = max(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else -999)
-        top_down = min(leaderboard_rows, key=lambda r: r[3] if r[3] is not None else 999)
-        analysis_lines = (
-            f"①{top_up[0]}：本周实收{fmt_money(top_up[2])}，环比{fmt_pct(top_up[3])}，为本周增幅最高门店。\n"
-            f"②{top_down[0]}：本周实收{fmt_money(top_down[2])}，环比{fmt_pct(top_down[3])}，为本周降幅最高门店。"
+    decline_rows = [row for row in leaderboard_rows if is_material_revenue_decline(row[3])]
+    decline_rows.sort(key=lambda row: row[3])
+    if decline_rows:
+        analysis_lines = "\n".join(
+            f"【{store_name}】双平台实收下滑{abs(ratio) * 100:.1f}%，本周实收{fmt_money(cur_value)}，上周实收{fmt_money(prev_value)}。"
+            for store_name, prev_value, cur_value, ratio in decline_rows
         )
     else:
-        analysis_lines = "本期无可用于排行榜的门店数据。"
+        analysis_lines = "本期无双平台实收下滑超过10%的门店。"
     narrative = (
         "整体：\n"
         f"1、本周双平台营业额{fmt_money(weekly_summary.cell(3, 5).value)}，环比{fmt_pct(weekly_summary.cell(3, 7).value)}；"

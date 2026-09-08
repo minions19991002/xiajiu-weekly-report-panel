@@ -777,6 +777,10 @@ def qoq(current, previous):
     return to_number(current) / previous - 1
 
 
+def is_material_revenue_decline(value):
+    return value is not None and round(value * 100, 1) < -10.0
+
+
 def pct_phrase(value):
     if value is None:
         return "持平"
@@ -874,6 +878,91 @@ def text_value(value):
     return str(value).strip()
 
 
+def parse_ratio_value(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        text = value.strip().replace(",", "")
+        if text in {"", "-", "—"}:
+            return None
+        is_percent = text.endswith("%")
+        if is_percent:
+            text = text[:-1].strip()
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+        return number / 100 if is_percent else number
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def local_store_norm(value):
+    text = text_value(value).lower()
+    text = text.replace("（", "(").replace("）", ")").replace("·", "").replace("shyno", "").replace("live", "")
+    for token in ["下酒", "烧烤小酒馆", "小酒馆", "社区酒馆", "drinks"]:
+        text = text.replace(token, "")
+    return re.sub(r"[\s()（）\-—·,，.。]", "", text)
+
+
+def match_sheet_store_name(raw, stores):
+    text = text_value(raw)
+    if not text:
+        return None
+    for store in stores:
+        if text == store["name"]:
+            return store["name"]
+    normalized = local_store_norm(text)
+    for store in stores:
+        target = store.get("norm") or local_store_norm(store.get("name"))
+        if target and normalized and (target in normalized or normalized in target):
+            return store["name"]
+    return text
+
+
+def sheet1_store_revenue_changes(ws, stores):
+    max_row = ws.max_row or 0
+    max_col = min(ws.max_column or 0, 40)
+    header = None
+    for row in range(1, min(max_row, 20) + 1):
+        for col in range(1, max_col + 1):
+            if text_value(ws.cell(row, col).value) != "门店名称":
+                continue
+            scan_end = min(max_col, col + 6)
+            qoq_col = next(
+                (candidate for candidate in range(col + 1, scan_end + 1) if text_value(ws.cell(row, candidate).value) == "环比"),
+                None,
+            )
+            if qoq_col:
+                header = (row, col, qoq_col)
+                break
+        if header:
+            break
+    if not header:
+        return {}
+
+    header_row, name_col, qoq_col = header
+    changes = {}
+    empty_seen = 0
+    row_limit = min(max_row, header_row + max(len(stores) + 10, 40))
+    for row in range(header_row + 1, row_limit + 1):
+        raw_name = text_value(ws.cell(row, name_col).value)
+        if not raw_name:
+            empty_seen += 1
+            if empty_seen >= 2 and changes:
+                break
+            continue
+        empty_seen = 0
+        store_name = match_sheet_store_name(raw_name, stores)
+        if not store_name:
+            continue
+        ratio = parse_ratio_value(ws.cell(row, qoq_col).value)
+        changes[store_name] = {"name": store_name, "qoq": ratio}
+    return changes
+
+
 def preview_filter_promo_products(module, df, platform):
     if hasattr(module, "filter_promo_products"):
         return module.filter_promo_products(df, platform)
@@ -959,6 +1048,9 @@ def promo_metrics(module, files, stores, current_start, current_end, previous_st
 def update_m4_narrative(wb, module, files, current_start, current_end, previous_start, previous_end, cache=None, ele_visit_lift_rate=DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE):
     stores = workbook_stores(wb, module)
     current_stores = module.period_stores(stores, current_start, current_end) if hasattr(module, "period_stores") else stores
+    overall_ws = wb["整体业绩情况"]
+    leaderboard_changes = sheet1_store_revenue_changes(overall_ws, current_stores)
+    use_leaderboard_changes = bool(leaderboard_changes)
 
     mt_store = smart_read_df(module, files["mtStore"], "门店_全部门店", cache)
     ele_store = smart_read_df(module, files["eleStore"], "data", cache)
@@ -1018,7 +1110,9 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
         overall_previous_orders += mt_prev["orders"] + ele_prev["orders"]
 
         total_qoq = qoq(current_income, previous_income)
-        if total_qoq is not None and round(total_qoq * 100, 1) <= -10.0:
+        leaderboard_change = leaderboard_changes.get(store["name"])
+        gate_qoq = leaderboard_change["qoq"] if leaderboard_change else (None if use_leaderboard_changes else total_qoq)
+        if is_material_revenue_decline(gate_qoq):
             mt_change = metric_change(mt_cur, mt_prev)
             ele_change = metric_change(ele_cur, ele_prev)
             platform_changes = []
@@ -1033,7 +1127,7 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
             focus.append(
                 {
                     "name": store["name"],
-                    "total_qoq": total_qoq,
+                    "total_qoq": gate_qoq,
                     "platform_changes": platform_changes,
                 }
             )
@@ -1042,8 +1136,6 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
     promo_delta = promo["revenue_cur"] - promo["revenue_prev"]
     income_qoq = qoq(overall_current_income, overall_previous_income)
     order_qoq = qoq(overall_current_orders, overall_previous_orders)
-
-    overall_ws = wb["整体业绩情况"]
 
     def sheet1_dual_qoq(metric_name):
         for row_idx in range(4, 10):
