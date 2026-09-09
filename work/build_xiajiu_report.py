@@ -1221,7 +1221,6 @@ def main():
     total_promo_roi = safe_ratio(total_promo_revenue, total_promo_spend)
     promo_revenue_delta = total_promo_revenue - total_promo_prev_revenue
     decline_rows = [row for row in leaderboard_rows if is_material_revenue_decline(row[3])]
-    decline_rows.sort(key=lambda row: row[3])
     if decline_rows:
         analysis_lines = "\n".join(
             f"【{store_name}】双平台实收下滑{abs(ratio) * 100:.1f}%，本周实收{fmt_money(cur_value)}，上周实收{fmt_money(prev_value)}。"

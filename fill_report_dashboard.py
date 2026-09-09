@@ -959,7 +959,8 @@ def sheet1_store_revenue_changes(ws, stores):
         if not store_name:
             continue
         ratio = parse_ratio_value(ws.cell(row, qoq_col).value)
-        changes[store_name] = {"name": store_name, "qoq": ratio}
+        order = changes.get(store_name, {}).get("order", len(changes))
+        changes[store_name] = {"name": store_name, "qoq": ratio, "order": order}
     return changes
 
 
@@ -1128,6 +1129,7 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
                 {
                     "name": store["name"],
                     "total_qoq": gate_qoq,
+                    "leaderboard_order": leaderboard_change["order"] if leaderboard_change else None,
                     "platform_changes": platform_changes,
                 }
             )
@@ -1157,7 +1159,10 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
     ]
     lines.extend(["", "门店分析："])
 
-    focus.sort(key=lambda item: item["total_qoq"])
+    if use_leaderboard_changes:
+        focus.sort(key=lambda item: item["leaderboard_order"] if item["leaderboard_order"] is not None else 10**9)
+    else:
+        focus.sort(key=lambda item: item["total_qoq"])
     if focus:
         for item in focus:
             if len(item["platform_changes"]) >= 2:
