@@ -614,8 +614,8 @@ def write_metric_block(ws, row, values):
         ("revenue_cur", "revenue_prev", 13),
     ]
     for cur_key, prev_key, start_col in fields:
-        cur = round(to_number(values.get(cur_key, 0)))
-        prev = round(to_number(values.get(prev_key, 0)))
+        cur = to_number(values.get(cur_key, 0))
+        prev = to_number(values.get(prev_key, 0))
         ws.cell(row, start_col).value = cur
         ws.cell(row, start_col + 1).value = prev
         ws.cell(row, start_col + 2).value = qoq(cur, prev)
@@ -923,8 +923,7 @@ def main():
             prev = previous_score_for_store(previous_scores, store["name"], platform)
             diff = None if cur is None or prev is None else cur - prev
             for offset, val in enumerate([cur, prev, diff]):
-                decimals = 2 if offset == 2 else 1
-                ws.cell(idx, start_col + offset).value = None if val is None else round(val, decimals)
+                ws.cell(idx, start_col + offset).value = None if val is None else to_number(val)
                 ws.cell(idx, start_col + offset).number_format = "0.00" if offset == 2 else "0.0"
 
     # Sheet3: products.
@@ -1085,15 +1084,15 @@ def main():
                 value = parse_date(value)
                 ws.cell(idx, col).number_format = "yyyy-mm-dd"
             elif header in {"异常时间（分钟）", "营业时长（分钟）", "预计损失（元）"}:
-                value = round(to_number(value))
+                value = to_number(value)
                 ws.cell(idx, col).number_format = "#,##0"
             ws.cell(idx, col).value = value
     total_row_idx = 2 + len(loss_df)
     apply_row_styles(ws, total_row_idx, total_style)
     ws.cell(total_row_idx, 1).value = "合计"
-    ws.cell(total_row_idx, 4).value = round(loss_df["异常时间（分钟）"].map(to_number).sum())
-    ws.cell(total_row_idx, 5).value = round(loss_df["营业时长（分钟）"].map(to_number).sum())
-    ws.cell(total_row_idx, 6).value = round(loss_df["预计损失（元）"].map(to_number).sum())
+    ws.cell(total_row_idx, 4).value = loss_df["异常时间（分钟）"].map(to_number).sum()
+    ws.cell(total_row_idx, 5).value = loss_df["营业时长（分钟）"].map(to_number).sum()
+    ws.cell(total_row_idx, 6).value = loss_df["预计损失（元）"].map(to_number).sum()
     for col in [4, 5, 6]:
         ws.cell(total_row_idx, col).number_format = "#,##0"
     summary_start = total_row_idx + 3

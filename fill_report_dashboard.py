@@ -1192,8 +1192,8 @@ def trend_records_from_sheet(ws):
         records.append(
             {
                 "label": label,
-                "income": round(to_number(income_cell)),
-                "orders": round(to_number(orders_cell)),
+                "income": to_number(income_cell),
+                "orders": to_number(orders_cell),
             }
         )
     return records
@@ -1240,8 +1240,8 @@ def merge_ordered_trend_records(*record_groups):
                 continue
             clean = {
                 "label": label,
-                "income": round(to_number(record.get("income"))),
-                "orders": round(to_number(record.get("orders"))),
+                "income": to_number(record.get("income")),
+                "orders": to_number(record.get("orders")),
             }
             if label in index_by_label:
                 merged[index_by_label[label]] = clean
@@ -1432,7 +1432,7 @@ def apply_trend_history_and_format(wb, previous_report_path=None, current_label=
                 cell = ws.cell(row_idx, col_idx)
                 if isinstance(cell, MergedCell) or cell.value is None:
                     continue
-                cell.value = round(to_number(cell.value))
+                cell.value = to_number(cell.value)
                 cell.number_format = "#,##0"
 
     update_trend_chart_ranges(ws)
