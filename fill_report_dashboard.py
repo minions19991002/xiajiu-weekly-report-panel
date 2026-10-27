@@ -38,7 +38,7 @@ DEFAULT_ELE_VISIT_LIFT_TO_VISITOR_RATE = 0.7
 
 ROLES = [
     {"id": "previousReport", "label": "上周周报数据（可选）", "hints": ["上周周报", "上期周报", "历史周报", "已生成周报"], "optional": True},
-    {"id": "template", "label": "【下酒】周报数据", "hints": ["周报数据", "【下酒】"]},
+    {"id": "template", "label": "【下酒】周报数据模板", "hints": ["周报数据模板", "周报数据", "【下酒】"]},
     {"id": "weekly", "label": "下酒_周报", "hints": ["下酒_周报"], "reject": ["周报数据"]},
     {"id": "mtGoods", "label": "美团商品数据", "hints": ["美团商品"]},
     {"id": "eleGoods", "label": "饿了么商品数据", "hints": ["饿了么商品"]},
@@ -190,7 +190,7 @@ HTML = r"""<!doctype html>
       <aside class="side-panel">
         <h2>文件清单</h2>
         <ol>
-          <li>【下酒】周报数据.xlsx</li>
+          <li>【下酒】周报数据模板.xlsx</li>
           <li>下酒_周报.xlsx</li>
           <li>美团商品数据.xlsx</li>
           <li>饿了么商品数据.xlsx</li>
