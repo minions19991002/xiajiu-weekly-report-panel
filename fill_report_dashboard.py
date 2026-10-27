@@ -516,7 +516,10 @@ def classify_workbook_content(path: Path) -> tuple[str | None, int]:
     if token_all(tokens, ["推广现金消费(元)", "曝光提升数", "进店提升数", "推广产品", "计划id"]):
         add_score(scores, "elePromo", 120)
 
-    if token_all(tokens, ["营业收入", "优惠前总额", "顾客实付", "有效订单", "入店人数", "平台活动补贴"]):
+    mt_store_headers = ["优惠前总额", "顾客实付", "有效订单", "入店人数", "平台活动补贴"]
+    if token_all(tokens, mt_store_headers) and (
+        token_has(tokens, "营业收入") or token_has(tokens, "订单收入")
+    ):
         add_score(scores, "mtStore", 120)
     if token_all(tokens, ["营业时长", "有效订单", "收入", "营业额", "门店编号", "平台技术服务费"]):
         add_score(scores, "eleStore", 120)
@@ -825,6 +828,13 @@ def metric_snapshot(df, fields):
     }
 
 
+def first_existing_column(df, candidates):
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    raise KeyError("缺少字段：" + "、".join(candidates))
+
+
 def metric_change(current, previous):
     return {
         "revenue_qoq": qoq(current["revenue"], previous["revenue"]),
@@ -1073,7 +1083,7 @@ def update_m4_narrative(wb, module, files, current_start, current_end, previous_
         ele_store_previous = ele_store[(ele_store["_date"] >= previous_start) & (ele_store["_date"] <= previous_end)]
 
     mt_fields = {
-        "revenue": "营业收入",
+        "revenue": first_existing_column(mt_store, ["营业收入", "订单收入"]),
         "orders": "有效订单",
         "exposure": "曝光人数",
         "visits": "入店人数",

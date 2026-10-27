@@ -819,6 +819,7 @@ def main():
 
     mt_store = read_df(MT_STORE, "门店_全部门店_20260601_20260621_wmdyy")
     ele_store = read_df(ELE_STORE, "data")
+    mt_revenue_col = find_column(mt_store, ["营业收入", "订单收入"])
     mt_store["_date"] = date_series(mt_store["日期"])
     ele_store["_date"] = date_series(ele_store["日期"])
     mt_store["_id"] = mt_store["门店id"].map(id_text)
@@ -848,7 +849,7 @@ def main():
     profit_target = to_number(profit_ws.cell(2, month_col).value)
     service_target = to_number(profit_ws.cell(3, month_col).value)
 
-    revenue_received = mt_store_month["营业收入"].map(to_number).sum() + ele_store_month["收入"].map(to_number).sum()
+    revenue_received = mt_store_month[mt_revenue_col].map(to_number).sum() + ele_store_month["收入"].map(to_number).sum()
     gross_sales = mt_store_month["优惠前总额"].map(to_number).sum() + ele_store_month["营业额"].map(to_number).sum()
     service_fee = service_target / month_days * elapsed_days
     promo_spend = mt_promo_filtered["推广费"].map(to_number).sum() + ele_promo_filtered["推广现金消费(元)"].map(to_number).sum()
@@ -878,11 +879,11 @@ def main():
     if not leaderboard_rows:
         for store in current_stores:
             prev_value = (
-                mt_store_previous[mt_store_previous["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+                mt_store_previous[mt_store_previous["_id"] == store["mt_id"]][mt_revenue_col].map(to_number).sum()
                 + ele_store_previous[ele_store_previous["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
             )
             cur_value = (
-                mt_store_current[mt_store_current["_id"] == store["mt_id"]]["营业收入"].map(to_number).sum()
+                mt_store_current[mt_store_current["_id"] == store["mt_id"]][mt_revenue_col].map(to_number).sum()
                 + ele_store_current[ele_store_current["_id"] == store["ele_id"]]["收入"].map(to_number).sum()
             )
             store_name = store["name"]
